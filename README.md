@@ -1,0 +1,163 @@
+# GitHub Portfolio Reviewer
+
+A Streamlit application that reviews how effectively a public GitHub repository
+presents an engineering project to internship recruiters and technical
+reviewers. It produces a transparent score out of 100, evidence for every check,
+and a prioritized improvement plan.
+
+> The score is a deterministic portfolio-presentation heuristic. It does not
+> measure developer ability or code correctness, and its security section is not
+> a security audit.
+
+## Features
+
+- Accepts `owner/repository`, a GitHub repository URL, or an SSH clone string.
+- Collects repository metadata, the preferred README, and the recursive file
+  tree through the GitHub REST API.
+- Reviews metadata, README quality, structure, tests, CI/CD, documentation, and
+  basic security signals.
+- Shows the evidence and points behind every result.
+- Produces deduplicated, prioritized improvement suggestions.
+- Handles missing repositories, invalid tokens, API limits, timeouts, empty
+  repositories, missing READMEs, and truncated trees.
+- Uses no database and does not intentionally persist GitHub tokens.
+
+## Scoring rubric
+
+| Category | Points | Examples of evidence |
+| --- | ---: | --- |
+| Repository metadata | 10 | Description, topics, license, archive status |
+| README quality | 25 | Detail, setup, usage, badges, visuals |
+| Project structure | 15 | Source layout, manifest, `.gitignore`, modularity |
+| Tests | 15 | Test files, test configuration, coverage evidence |
+| CI/CD | 10 | Recognized workflow and visible status badge |
+| Documentation | 10 | Extended docs and project-governance files |
+| Security | 15 | Security policy, dependency updates, risky filenames, lock file |
+| **Total** | **100** | Pass = full points, partial = half, fail = zero |
+
+Stars, forks, and issue counts are displayed but never scored. Popularity is not
+a reliable measure of engineering quality. CI configuration is not proof that a
+workflow passes, and suspicious filenames are not proof that they contain
+secrets.
+
+## Architecture
+
+```text
+Streamlit UI -> Review service -> GitHub client -> GitHub REST API
+                     |
+                     +-> Analyzer -> Scoring -> Suggestions
+                              \____ domain models ____/
+```
+
+The analyzer and scoring rules contain no Streamlit or Requests code, which
+makes them deterministic and independently testable. See
+[`docs/architecture.md`](docs/architecture.md) for responsibilities and design
+tradeoffs.
+
+## External libraries
+
+- **Streamlit** renders the interactive web interface from Python.
+- **Requests** sends bounded, timeout-protected calls to GitHub's REST API.
+- **Pytest** runs the offline automated test suite during development and CI.
+- **Ruff** performs linting, import organization, and deterministic formatting.
+- **Setuptools** builds and installs the `src/`-layout Python package.
+
+The project deliberately avoids a GitHub SDK: only three endpoints are needed,
+and a small Requests adapter keeps error handling and response validation
+visible.
+
+## Local setup
+
+Python 3.12 or newer is required.
+
+```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e ".[dev]"
+```
+
+On this development machine, `python3` points to Python 3.9.6 while Python 3.12
+is available at `/opt/anaconda3/bin/python3.12`. Use the explicit 3.12 executable
+when creating the environment if your machine has the same setup.
+
+## Run the application
+
+```bash
+streamlit run streamlit_app.py
+```
+
+Enter a public repository such as `owner/repository`. The optional token in the
+sidebar raises the GitHub API request limit. A normal review makes three API
+requests; an empty repository makes two.
+
+### Optional local token
+
+Copy the example secrets file and replace its placeholder:
+
+```bash
+cp .streamlit/secrets.toml.example .streamlit/secrets.toml
+```
+
+Never commit `.streamlit/secrets.toml`; it is excluded by `.gitignore`. For
+public repositories, use no token or a least-privilege token that can read public
+repository metadata.
+
+## Quality checks
+
+```bash
+python -m ruff check .
+python -m ruff format --check .
+python -m pytest
+```
+
+The tests inject fake HTTP sessions and block accidental real requests. This
+keeps them fast, repeatable, and independent of GitHub availability or rate
+limits.
+
+GitHub Actions runs the same three checks for pushes to `main` and pull
+requests. The workflow has read-only repository permissions.
+
+## Deploy to Streamlit Community Cloud
+
+1. Push the repository to GitHub.
+2. In Streamlit Community Cloud, create an app from that repository and branch.
+3. Set the entry point to `streamlit_app.py` and choose Python 3.12.
+4. Optionally add `GITHUB_TOKEN = "..."` in the app's Secrets settings.
+5. Deploy and test one public repository with and without expected missing
+   features.
+
+`requirements.txt` contains `.` so the cloud builder installs this setuptools
+project and makes the `src/` package importable. Deployment itself requires the
+repository owner's GitHub and Streamlit accounts.
+
+## Limitations
+
+- Only public GitHub repositories are supported.
+- The analyzer reads README content but otherwise checks file paths rather than
+  source or configuration contents.
+- Test presence does not prove test quality or execution success.
+- Security checks cannot discover arbitrary embedded secrets or vulnerable code.
+- GitHub may truncate file trees for very large repositories; those reports are
+  clearly marked provisional.
+- Heuristics favor common project conventions and can produce false positives or
+  false negatives for unusual ecosystems.
+
+## Project documentation
+
+- [Architecture and design decisions](docs/architecture.md)
+- [Contribution guide](CONTRIBUTING.md)
+- [Security policy](SECURITY.md)
+
+## Suggested next improvements
+
+- Add bounded inspection of CI and dependency configuration content.
+- Export a report as Markdown or JSON.
+- Let users compare two snapshots of the same repository.
+- Add ecosystem-specific rule profiles without changing the core score silently.
+
+## License decision
+
+No license has been chosen yet. The repository owner should select one that fits
+their intended reuse policy and then add the standard `LICENSE` file. This is
+intentionally not automated because licensing is an ownership decision.
