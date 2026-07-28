@@ -25,17 +25,18 @@ jobs:
           cache-dependency-path: |
             pyproject.toml
             requirements.txt
+            uv.lock
 
-      - name: Install project and development tools
+      - name: Install locked project and development tools
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install -e ".[dev]"
+          python -m pip install uv==0.11.32
+          uv sync --frozen --extra dev
 
       - name: Lint
-        run: python -m ruff check .
+        run: uv run ruff check .
 
       - name: Check formatting
-        run: python -m ruff format --check .
+        run: uv run ruff format --check .
 
       - name: Test
-        run: python -m pytest
+        run: uv run pytest --cov=github_portfolio_reviewer --cov-report=term-missing

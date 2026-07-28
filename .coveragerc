@@ -1,0 +1,8 @@
+[run]
+branch = True
+source = src/github_portfolio_reviewer
+
+[report]
+fail_under = 85
+show_missing = True
+skip_covered = True

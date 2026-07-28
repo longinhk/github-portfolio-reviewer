@@ -1,5 +1,8 @@
 # GitHub Portfolio Reviewer
 
+[![CI](https://github.com/longinhk/github-portfolio-reviewer/actions/workflows/ci.yml/badge.svg)](https://github.com/longinhk/github-portfolio-reviewer/actions/workflows/ci.yml)
+![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white)
+
 A Streamlit application that reviews how effectively a public GitHub repository
 presents an engineering project to internship recruiters and technical
 reviewers. It produces a transparent score out of 100, evidence for every check,
@@ -8,6 +11,8 @@ and a prioritized improvement plan.
 > The score is a deterministic portfolio-presentation heuristic. It does not
 > measure developer ability or code correctness, and its security section is not
 > a security audit.
+
+![GitHub Portfolio Reviewer interface](docs/repository-review.svg)
 
 ## Features
 
@@ -18,6 +23,8 @@ and a prioritized improvement plan.
   basic security signals.
 - Shows the evidence and points behind every result.
 - Produces deduplicated, prioritized improvement suggestions.
+- Includes dark and light GitHub-inspired themes, check filters, search, and a
+  mobile-responsive report.
 - Handles missing repositories, invalid tokens, API limits, timeouts, empty
   repositories, missing READMEs, and truncated trees.
 - Uses no database and does not intentionally persist GitHub tokens.
@@ -59,7 +66,11 @@ tradeoffs.
 - **Streamlit** renders the interactive web interface from Python.
 - **Requests** sends bounded, timeout-protected calls to GitHub's REST API.
 - **Pytest** runs the offline automated test suite during development and CI.
+- **pytest-cov** measures which production lines the Pytest suite exercises and
+  enforces the documented coverage floor.
 - **Ruff** performs linting, import organization, and deterministic formatting.
+- **uv** creates the cross-platform lock file and installs that exact environment
+  in CI.
 - **Setuptools** builds and installs the `src/`-layout Python package.
 
 The project deliberately avoids a GitHub SDK: only three endpoints are needed,
@@ -77,6 +88,14 @@ python -m pip install --upgrade pip
 python -m pip install -e ".[dev]"
 ```
 
+To reproduce the exact CI dependency environment instead, install uv and sync
+the committed lock file:
+
+```bash
+python -m pip install uv==0.11.32
+uv sync --frozen --extra dev
+```
+
 On this development machine, `python3` points to Python 3.9.6 while Python 3.12
 is available at `/opt/anaconda3/bin/python3.12`. Use the explicit 3.12 executable
 when creating the environment if your machine has the same setup.
@@ -87,9 +106,18 @@ when creating the environment if your machine has the same setup.
 streamlit run streamlit_app.py
 ```
 
-Enter a public repository such as `owner/repository`. The optional token in the
-sidebar raises the GitHub API request limit. A normal review makes three API
-requests; an empty repository makes two.
+## Usage
+
+1. Open the local Streamlit URL printed in the terminal.
+2. Enter `owner/repository` or a public repository URL.
+3. Select **Run review**.
+4. Use **Overview** for the score and highest-impact actions, **Checks** to
+   filter the 27 evidence-backed results, and **Recommendations** for the full
+   improvement plan.
+5. Open **Settings** to change appearance or provide an optional GitHub token.
+
+Try `longinhk/github-portfolio-reviewer` to review this project itself. A normal
+review makes three GitHub API requests; an empty repository makes two.
 
 ### Optional local token
 
@@ -108,12 +136,12 @@ repository metadata.
 ```bash
 python -m ruff check .
 python -m ruff format --check .
-python -m pytest
+python -m pytest --cov=github_portfolio_reviewer --cov-report=term-missing
 ```
 
-The tests inject fake HTTP sessions and block accidental real requests. This
-keeps them fast, repeatable, and independent of GitHub availability or rate
-limits.
+The tests inject fake HTTP sessions, block accidental real requests, and enforce
+the coverage threshold in `.coveragerc`. This keeps them fast, repeatable, and
+independent of GitHub availability or rate limits.
 
 GitHub Actions runs the same three checks for pushes to `main` and pull
 requests. The workflow has read-only repository permissions.
@@ -147,6 +175,8 @@ repository owner's GitHub and Streamlit accounts.
 
 - [Architecture and design decisions](docs/architecture.md)
 - [Contribution guide](CONTRIBUTING.md)
+- [Code of conduct](CODE_OF_CONDUCT.md)
+- [Change history](CHANGELOG.md)
 - [Security policy](SECURITY.md)
 
 ## Suggested next improvements
