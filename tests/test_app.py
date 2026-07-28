@@ -1,9 +1,11 @@
 """Rendering and presentation-helper tests for the Streamlit app."""
 
+from collections.abc import Callable
 from pathlib import Path
 
 from streamlit.testing.v1 import AppTest
 
+from github_portfolio_reviewer.analyzer import analyze_repository
 from github_portfolio_reviewer.app import (
     _check_counts,
     _error_presentation,
@@ -21,9 +23,11 @@ from github_portfolio_reviewer.models import (
     Category,
     CheckId,
     CheckStatus,
+    RepositorySnapshot,
     ScoredCheck,
     Suggestion,
 )
+from github_portfolio_reviewer.scoring import score_repository
 
 
 def _make_check(
@@ -55,6 +59,34 @@ def test_initial_page_renders_without_exceptions() -> None:
     assert app.title[0].value == "Repository review"
     assert any(button.label == "Run review" for button in app.button)
     assert any(button.label == "Use example" for button in app.button)
+
+
+def test_report_page_renders_all_sections_without_exceptions(
+    make_snapshot: Callable[..., RepositorySnapshot],
+) -> None:
+    entry_point = Path(__file__).parents[1] / "streamlit_app.py"
+    snapshot = make_snapshot(
+        description="A detailed repository description for the rendering test.",
+        readme=(
+            "# Example project\n\n"
+            "## Installation\n\nInstall the project.\n\n"
+            "## Usage\n\nRun the application.\n"
+        ),
+        files=("app.py", "tests/test_app.py", "pyproject.toml"),
+    )
+    report = score_repository(snapshot, analyze_repository(snapshot))
+    app = AppTest.from_file(str(entry_point))
+    app.session_state["review_report"] = report
+
+    app.run(timeout=10)
+
+    assert not app.exception
+    assert any(button.label == "Run review" for button in app.button)
+    assert [tab.label for tab in app.tabs] == [
+        "Overview",
+        "Checks (27)",
+        "Recommendations",
+    ]
 
 
 def test_check_counts_and_filters() -> None:
