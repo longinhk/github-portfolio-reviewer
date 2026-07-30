@@ -21,6 +21,7 @@ from github_portfolio_reviewer.models import (
     Category,
     CheckId,
     CheckStatus,
+    EvidenceConfidence,
     ReviewMode,
     ReviewReport,
     ScoredCheck,
@@ -41,7 +42,14 @@ RECENT_REPOSITORY_LIMIT = 4
 STATUS_LABELS = {
     CheckStatus.PASS: "PASS",
     CheckStatus.PARTIAL: "PARTIAL",
-    CheckStatus.FAIL: "MISSING",
+    CheckStatus.FAIL: "NEEDS WORK",
+}
+
+CONFIDENCE_LABELS = {
+    EvidenceConfidence.VERIFIED: "VERIFIED",
+    EvidenceConfidence.SAMPLED: "SAMPLED",
+    EvidenceConfidence.UNVERIFIED: "UNVERIFIED",
+    EvidenceConfidence.PROVISIONAL: "PROVISIONAL",
 }
 
 CATEGORY_IMPACT = {
@@ -111,11 +119,15 @@ def _render_product_bar() -> str | None:
                 type="password",
                 key="github_token",
                 help=(
-                    "Optional. A token raises GitHub API limits. Public-repository "
-                    "metadata needs no special scopes."
+                    "Optional. Use a personal token only in a deployment you control. "
+                    "It raises GitHub API limits; public repositories need no special "
+                    "scopes."
                 ),
             )
-            st.caption("Used only for GitHub requests and never included in reports.")
+            st.caption(
+                "Kept in this session, sent only to GitHub for requests, and never "
+                "included in reports."
+            )
 
     configured_token = _secret_token()
     effective_token = token.strip() or configured_token
@@ -173,7 +185,11 @@ def _render_review_form(*, compact: bool) -> tuple[str, ReviewMode, bool]:
                 "Repository",
                 placeholder="owner/repository or https://github.com/owner/repository",
                 key="repository_input",
-                help="Enter owner/repository or a public GitHub repository URL.",
+                help=(
+                    "Enter owner/repository or a public GitHub URL. Branch (/tree/...) "
+                    "and file (/blob/...) links are accepted; reviews always use the "
+                    "repository's default branch."
+                ),
             )
         with focus_column:
             review_mode_label = st.selectbox(
@@ -304,7 +320,7 @@ def _error_presentation(error: GitHubClientError) -> tuple[str, str]:
     if isinstance(error, InvalidRepositoryError):
         return (
             "Repository address is not valid",
-            "Use owner/repository or the repository's root GitHub URL.",
+            "Use owner/repository or a repository, branch, or file URL from github.com.",
         )
     if isinstance(error, RepositoryNotFoundError):
         return (
@@ -350,6 +366,7 @@ def _render_empty_workspace() -> None:
         "</div></div>",
         unsafe_allow_html=True,
     )
+    _render_scope_and_cost()
 
 
 def _render_report(report: ReviewReport) -> None:
@@ -389,12 +406,12 @@ def _render_report(report: ReviewReport) -> None:
     if repository.tree_truncated:
         st.warning(
             "GitHub returned a truncated file tree. Missing file-based signals receive "
-            "partial credit, so this score is provisional."
+            "partial credit, so this portfolio presentation score is provisional."
         )
     if repository.inspection_truncated:
         st.info(
-            "The bounded content-inspection limit was reached. Findings describe the "
-            "sampled evidence and do not claim a full-repository code scan."
+            "Some eligible content could not be inspected within this bounded review. "
+            "Findings reflect available evidence and are not a full code scan."
         )
 
     _render_score_summary(report)
@@ -414,6 +431,7 @@ def _render_report(report: ReviewReport) -> None:
         _render_checks(report)
     with suggestions_tab:
         _render_suggestions(report, suggestions)
+    _render_scope_and_cost()
 
 
 def _render_score_summary(report: ReviewReport) -> None:
@@ -424,17 +442,18 @@ def _render_score_summary(report: ReviewReport) -> None:
     st.markdown(
         '<div class="summary-grid">'
         '<div class="score-card">'
-        '<div class="score-label">REPOSITORY SCORE</div>'
+        '<div class="score-label">PORTFOLIO PRESENTATION SCORE</div>'
         f'<div class="score-value">{score}<span>/100</span></div>'
         f'<div class="score-band">{escape(score_band(report.score))}</div>'
+        '<div class="score-context">Presentation signals—not code quality.</div>'
         '<div class="score-track">'
         f'<span style="width: {percentage}%"></span></div>'
         "</div>"
         '<div class="signal-card signal-pass"><span>PASS</span>'
-        f"<strong>{counts[CheckStatus.PASS]}</strong><small>verified checks</small></div>"
+        f"<strong>{counts[CheckStatus.PASS]}</strong><small>checks satisfied</small></div>"
         '<div class="signal-card signal-partial"><span>PARTIAL</span>'
         f"<strong>{counts[CheckStatus.PARTIAL]}</strong><small>some evidence</small></div>"
-        '<div class="signal-card signal-fail"><span>MISSING</span>'
+        '<div class="signal-card signal-fail"><span>NEEDS WORK</span>'
         f"<strong>{counts[CheckStatus.FAIL]}</strong><small>needs attention</small></div>"
         '<div class="signal-card signal-opportunity"><span>AVAILABLE</span>'
         f"<strong>+{available}</strong><small>recoverable points</small></div>"
@@ -506,7 +525,7 @@ def _render_top_actions(
         )
         return
     st.markdown(
-        '<div class="projection-line">Complete these actions for up to '
+        '<div class="projection-line">Complete these presentation actions for up to '
         f"<strong>{_format_points(projected_score)}/100</strong></div>",
         unsafe_allow_html=True,
     )
@@ -541,7 +560,7 @@ def _render_category_scores(report: ReviewReport) -> None:
     )
     st.markdown(
         '<div class="method-note"><strong>Scoring:</strong> pass = full points, '
-        "partial = half, missing = zero. Popularity metrics are not scored. "
+        "partial = half, needs work = zero. Popularity metrics are not scored. "
         f"Ruleset {escape(report.ruleset_version)}; review focus changes recommendation "
         "order only.</div>",
         unsafe_allow_html=True,
@@ -617,6 +636,8 @@ def _check_rows_markup(checks: Sequence[ScoredCheck], report: ReviewReport) -> s
     for check in checks:
         status = STATUS_LABELS[check.status]
         status_class = check.status.value
+        confidence = CONFIDENCE_LABELS[check.confidence]
+        confidence_class = check.confidence.value.casefold()
         source_links = " ".join(
             '<a href="'
             f'{escape(_source_url(report, source))}" target="_blank" '
@@ -644,6 +665,9 @@ def _check_rows_markup(checks: Sequence[ScoredCheck], report: ReviewReport) -> s
             '<div class="check-header">'
             f'<span class="status status-{status_class}">{status}</span>'
             f'<span class="check-title">{escape(check.title)}</span>'
+            f'<span class="confidence confidence-{confidence_class}" '
+            f'title="Evidence confidence: {escape(confidence.title())}">'
+            f"{escape(confidence)}</span>"
             '<span class="check-points">'
             f"{_format_points(check.points)}/{check.max_points}"
             "</span></div>"
@@ -652,6 +676,41 @@ def _check_rows_markup(checks: Sequence[ScoredCheck], report: ReviewReport) -> s
             "</div>"
         )
     return "".join(rows)
+
+
+def _render_scope_and_cost() -> None:
+    """Render an honest, compact disclosure for this portfolio-scale tool."""
+    with st.expander("Scope, limitations & cost", expanded=False):
+        st.markdown(
+            '<div class="scope-disclosure">'
+            "<div><span>REQUIRED COST</span><strong>$0</strong>"
+            "<small>No paid service is required.</small></div>"
+            "<div><span>GITHUB API</span><strong>$0</strong>"
+            "<small>Public REST access and optional tokens are free; rate limits "
+            "apply.</small></div>"
+            "<div><span>AI / MODEL FEES</span><strong>$0</strong>"
+            "<small>No AI API or model is called.</small></div>"
+            "<div><span>HOSTING</span><strong>OPTIONAL</strong>"
+            "<small>A free tier can be used; provider terms may change.</small></div>"
+            "</div>",
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            "**This reviewer cannot:**\n\n"
+            "- Access private repositories or inspect every file in a large repository.\n"
+            "- Execute code, tests, workflows, deployments, or verify branch protection.\n"
+            "- Prove code correctness, developer ability, performance, or architecture "
+            "quality.\n"
+            "- Replace a security audit, dependency audit, secret-history scan, or "
+            "human review.\n"
+            "- Guarantee that uncommon layouts and ecosystems have no false positives "
+            "or negatives."
+        )
+        st.caption(
+            "Python, Streamlit, Requests, Pytest, and Ruff are free and open source. "
+            "A custom domain or paid host is optional and unnecessary for this CV "
+            "project."
+        )
 
 
 def _source_url(report: ReviewReport, path: str) -> str:

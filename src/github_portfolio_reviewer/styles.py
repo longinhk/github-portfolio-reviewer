@@ -365,6 +365,44 @@ div[data-testid="stForm"] {
     font-size: 0.72rem;
 }
 
+.scope-disclosure {
+    display: grid;
+    gap: 0.65rem;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    margin: 0.25rem 0 1rem;
+}
+
+.scope-disclosure > div {
+    background: var(--canvas);
+    border: 1px solid var(--border-muted);
+    border-radius: 6px;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    padding: 0.75rem;
+}
+
+.scope-disclosure span {
+    color: var(--muted);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.65rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+}
+
+.scope-disclosure strong {
+    color: var(--green);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 1rem;
+    margin: 0.25rem 0 0.15rem;
+}
+
+.scope-disclosure small {
+    color: var(--muted);
+    font-size: 0.7rem;
+    line-height: 1.4;
+}
+
 [data-testid="stStatusWidget"],
 [data-testid="stAlertContainer"] {
     background: var(--surface) !important;
@@ -465,6 +503,12 @@ div[data-testid="stForm"] {
 .score-band {
     color: var(--muted);
     font-size: 0.75rem;
+}
+
+.score-context {
+    color: var(--subtle);
+    font-size: 0.67rem;
+    margin-top: 0.2rem;
 }
 
 .score-track {
@@ -673,7 +717,7 @@ div[data-testid="stForm"] {
     align-items: center;
     display: grid;
     gap: 0.65rem;
-    grid-template-columns: 64px 1fr 48px;
+    grid-template-columns: 86px minmax(90px, 1fr) 82px 48px;
 }
 
 .status,
@@ -686,6 +730,42 @@ div[data-testid="stForm"] {
     letter-spacing: 0.04em;
     padding: 0.1rem 0.35rem;
     text-align: center;
+}
+
+.confidence {
+    border: 1px solid;
+    border-radius: 999px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.58rem;
+    font-weight: 600;
+    letter-spacing: 0.035em;
+    padding: 0.1rem 0.3rem;
+    text-align: center;
+    white-space: nowrap;
+}
+
+.confidence-verified {
+    background: color-mix(in srgb, var(--green) 8%, transparent);
+    border-color: color-mix(in srgb, var(--green) 35%, transparent);
+    color: var(--green);
+}
+
+.confidence-sampled {
+    background: color-mix(in srgb, var(--blue) 8%, transparent);
+    border-color: color-mix(in srgb, var(--blue) 35%, transparent);
+    color: var(--blue);
+}
+
+.confidence-unverified {
+    background: color-mix(in srgb, var(--amber) 8%, transparent);
+    border-color: color-mix(in srgb, var(--amber) 35%, transparent);
+    color: var(--amber);
+}
+
+.confidence-provisional {
+    background: color-mix(in srgb, var(--red) 7%, transparent);
+    border-color: color-mix(in srgb, var(--red) 32%, transparent);
+    color: var(--red);
 }
 
 .status-pass {
@@ -724,7 +804,7 @@ div[data-testid="stForm"] {
     color: var(--muted);
     font-size: 0.75rem;
     line-height: 1.45;
-    margin: 0.35rem 0 0 4.95rem;
+    margin: 0.35rem 0 0 6.05rem;
 }
 
 .recommendation-row {
@@ -867,6 +947,10 @@ hr {
         grid-template-columns: 1fr;
     }
 
+    .scope-disclosure {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
     .workflow-list {
         border-left: 0;
         border-top: 1px solid var(--border);
@@ -934,6 +1018,26 @@ hr {
 
     .signal-card:last-child {
         border-radius: 0 0 6px 0;
+    }
+
+    .scope-disclosure {
+        grid-template-columns: 1fr;
+    }
+
+    .check-header {
+        gap: 0.4rem;
+        grid-template-columns: 82px minmax(80px, 1fr) 44px;
+    }
+
+    .confidence {
+        grid-column: 2;
+        grid-row: 2;
+        justify-self: start;
+    }
+
+    .check-points {
+        grid-column: 3;
+        grid-row: 1;
     }
 }
 """

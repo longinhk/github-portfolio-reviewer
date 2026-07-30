@@ -34,7 +34,7 @@ def review_repository(
     snapshot = github_client.fetch_repository(reference)
     _notify(progress, "2/3 Inspecting deterministic portfolio signals")
     findings = analyze_repository(snapshot)
-    _notify(progress, "3/3 Calculating the transparent 100-point score")
+    _notify(progress, "3/3 Calculating the portfolio presentation score")
     return score_repository(snapshot, findings, review_mode=review_mode)
 
 

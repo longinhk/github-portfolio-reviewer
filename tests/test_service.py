@@ -44,5 +44,5 @@ def test_review_repository_runs_complete_pipeline_offline(
     assert progress_messages == [
         "1/3 Fetching repository evidence from GitHub",
         "2/3 Inspecting deterministic portfolio signals",
-        "3/3 Calculating the transparent 100-point score",
+        "3/3 Calculating the portfolio presentation score",
     ]

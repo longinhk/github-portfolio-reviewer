@@ -8,6 +8,7 @@ from streamlit.testing.v1 import AppTest
 from github_portfolio_reviewer.analyzer import analyze_repository
 from github_portfolio_reviewer.app import (
     _check_counts,
+    _check_rows_markup,
     _error_presentation,
     _filter_checks,
     _projected_score,
@@ -24,6 +25,7 @@ from github_portfolio_reviewer.models import (
     Category,
     CheckId,
     CheckStatus,
+    EvidenceConfidence,
     RepositorySnapshot,
     ReviewMode,
     ReviewReport,
@@ -39,6 +41,7 @@ def _make_check(
     category: Category,
     title: str,
     evidence: str,
+    confidence: EvidenceConfidence = EvidenceConfidence.VERIFIED,
 ) -> ScoredCheck:
     points = 2.0 if status == CheckStatus.PASS else 1.0
     return ScoredCheck(
@@ -50,6 +53,7 @@ def _make_check(
         points=points,
         max_points=2,
         recommendation="Improve this signal.",
+        confidence=confidence,
     )
 
 
@@ -62,11 +66,23 @@ def test_initial_page_renders_without_exceptions() -> None:
     assert app.title[0].value == "Repository review"
     assert any(button.label == "Run review" for button in app.button)
     assert any(button.label == "Use example" for button in app.button)
+    repository_input = next(
+        text_input for text_input in app.text_input if text_input.label == "Repository"
+    )
+    assert "/tree/..." in repository_input.help
+    assert "default branch" in repository_input.help
     review_focus = next(
         selectbox for selectbox in app.selectbox if selectbox.label == "Review focus"
     )
     assert review_focus.value == ReviewMode.GENERAL.value
     assert any("No AI API" in caption.value for caption in app.caption)
+    assert any(
+        expander.label == "Scope, limitations & cost" for expander in app.expander
+    )
+    assert any(
+        "REQUIRED COST" in markdown.value and "$0" in markdown.value
+        for markdown in app.markdown
+    )
 
 
 def test_report_page_renders_all_sections_without_exceptions(
@@ -81,6 +97,7 @@ def test_report_page_renders_all_sections_without_exceptions(
             "## Usage\n\nRun the application.\n"
         ),
         files=("app.py", "tests/test_app.py", "pyproject.toml"),
+        inspection_truncated=True,
     )
     report = score_repository(snapshot, analyze_repository(snapshot))
     app = AppTest.from_file(str(entry_point))
@@ -96,6 +113,64 @@ def test_report_page_renders_all_sections_without_exceptions(
         "Recommendations",
     ]
     assert any("Portable reports" in caption.value for caption in app.caption)
+    assert any(
+        "Some eligible content could not be inspected" in info.value
+        for info in app.info
+    )
+    assert any(
+        "PORTFOLIO PRESENTATION SCORE" in markdown.value for markdown in app.markdown
+    )
+    assert any(
+        expander.label == "Scope, limitations & cost" for expander in app.expander
+    )
+
+
+def test_check_rows_show_outcome_and_evidence_confidence(
+    make_snapshot: Callable[..., RepositorySnapshot],
+) -> None:
+    checks = (
+        _make_check(
+            CheckId.TEST_FILES,
+            CheckStatus.FAIL,
+            Category.TESTS,
+            "Automated tests",
+            "No test files were found.",
+            EvidenceConfidence.VERIFIED,
+        ),
+        _make_check(
+            CheckId.TEST_QUALITY,
+            CheckStatus.PARTIAL,
+            Category.TESTS,
+            "Test implementation",
+            "A bounded sample was inspected.",
+            EvidenceConfidence.SAMPLED,
+        ),
+        _make_check(
+            CheckId.TEST_CONFIGURATION,
+            CheckStatus.PARTIAL,
+            Category.TESTS,
+            "Test configuration",
+            "Configuration could not be inspected.",
+            EvidenceConfidence.UNVERIFIED,
+        ),
+        _make_check(
+            CheckId.DOCS,
+            CheckStatus.PARTIAL,
+            Category.DOCUMENTATION,
+            "Extended documentation",
+            "The file tree was truncated.",
+            EvidenceConfidence.PROVISIONAL,
+        ),
+    )
+    report = ReviewReport(repository=make_snapshot(), checks=checks)
+
+    markup = _check_rows_markup(checks, report)
+
+    assert "NEEDS WORK" in markup
+    assert ">MISSING<" not in markup
+    for confidence in EvidenceConfidence:
+        assert f"confidence-{confidence.value}" in markup
+        assert f">{confidence.value.upper()}</span>" in markup
 
 
 def test_check_counts_and_filters() -> None:

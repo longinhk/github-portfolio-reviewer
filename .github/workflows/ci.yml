@@ -24,7 +24,6 @@ jobs:
           cache: pip
           cache-dependency-path: |
             pyproject.toml
-            requirements.txt
             uv.lock
 
       - name: Install locked project and development tools
