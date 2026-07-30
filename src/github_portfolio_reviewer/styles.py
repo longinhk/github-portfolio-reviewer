@@ -190,7 +190,8 @@ label,
 
 [data-testid="stPopover"] button,
 .stButton button,
-.stLinkButton a {
+.stLinkButton a,
+[data-testid="stDownloadButton"] button {
     background: var(--surface) !important;
     border: 1px solid var(--border) !important;
     border-radius: 6px !important;
@@ -201,7 +202,8 @@ label,
 
 [data-testid="stPopover"] button:hover,
 .stButton button:hover,
-.stLinkButton a:hover {
+.stLinkButton a:hover,
+[data-testid="stDownloadButton"] button:hover {
     background: var(--surface-raised) !important;
     border-color: var(--subtle) !important;
 }

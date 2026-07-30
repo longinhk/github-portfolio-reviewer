@@ -43,9 +43,12 @@ class CheckId(StrEnum):
     GITIGNORE = "gitignore"
     MODULARITY = "modularity"
     TEST_FILES = "test_files"
+    TEST_QUALITY = "test_quality"
     TEST_CONFIGURATION = "test_configuration"
     COVERAGE = "coverage"
     CI_WORKFLOW = "ci_workflow"
+    ACTIONS_PINNED = "actions_pinned"
+    WORKFLOW_PERMISSIONS = "workflow_permissions"
     CI_BADGE = "ci_badge"
     DOCS = "docs"
     CONTRIBUTING = "contributing"
@@ -54,7 +57,18 @@ class CheckId(StrEnum):
     SECURITY_POLICY = "security_policy"
     DEPENDENCY_UPDATES = "dependency_updates"
     NO_SENSITIVE_FILES = "no_sensitive_files"
+    NO_DETECTED_SECRETS = "no_detected_secrets"
     LOCK_FILE = "lock_file"
+
+
+class ReviewMode(StrEnum):
+    """Deterministic recommendation focus selected by the user."""
+
+    GENERAL = "General"
+    PYTHON = "Python internship"
+    AI_ML = "AI/ML internship"
+    DATA_SCIENCE = "Data science internship"
+    BACKEND = "Backend internship"
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,6 +82,14 @@ class RepositoryReference:
     def full_name(self) -> str:
         """Return the canonical ``owner/repository`` identifier."""
         return f"{self.owner}/{self.name}"
+
+
+@dataclass(frozen=True, slots=True)
+class RepositoryTextFile:
+    """Bounded text content fetched to verify selected repository signals."""
+
+    path: str
+    content: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,6 +113,8 @@ class RepositorySnapshot:
     readme: str | None
     files: tuple[str, ...]
     tree_truncated: bool = False
+    inspected_files: tuple[RepositoryTextFile, ...] = ()
+    inspection_truncated: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,6 +124,7 @@ class AnalysisFinding:
     check_id: CheckId
     status: CheckStatus
     evidence: str
+    sources: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,6 +139,8 @@ class ScoredCheck:
     points: float
     max_points: int
     recommendation: str
+    sources: tuple[str, ...] = ()
+    target: str = "Repository"
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,6 +158,8 @@ class ReviewReport:
 
     repository: RepositorySnapshot
     checks: tuple[ScoredCheck, ...]
+    review_mode: ReviewMode = ReviewMode.GENERAL
+    ruleset_version: str = "1.0.0"
 
     @property
     def score(self) -> float:
@@ -162,3 +191,4 @@ class Suggestion:
     title: str
     action: str
     potential_points: float
+    check_id: CheckId | None = None

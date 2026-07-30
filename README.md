@@ -8,6 +8,9 @@ presents an engineering project to internship recruiters and technical
 reviewers. It produces a transparent score out of 100, evidence for every check,
 and a prioritized improvement plan.
 
+**No AI API, model key, or paid inference service is required.** Every result
+comes from explicit Python rules applied to read-only GitHub evidence.
+
 > The score is a deterministic portfolio-presentation heuristic. It does not
 > measure developer ability or code correctness, and its security section is not
 > a security audit.
@@ -17,12 +20,18 @@ and a prioritized improvement plan.
 ## Features
 
 - Accepts `owner/repository`, a GitHub repository URL, or an SSH clone string.
-- Collects repository metadata, the preferred README, and the recursive file
-  tree through the GitHub REST API.
+- Collects repository metadata, the preferred README, the recursive file tree,
+  and a bounded allowlist of small text files through the GitHub REST API.
 - Reviews metadata, README quality, structure, tests, CI/CD, documentation, and
   basic security signals.
-- Shows the evidence and points behind every result.
-- Produces deduplicated, prioritized improvement suggestions.
+- Verifies selected test, Python, CI, dependency-update, and security signals
+  without cloning or executing repository code.
+- Shows points, evidence files, thresholds, and next steps behind every result.
+- Offers General, Python, AI/ML, data-science, and backend internship review
+  focuses. Focus changes recommendation order—not the comparable score.
+- Exports deterministic Markdown and JSON reports without raw source content.
+- Reuses recent public evidence for five minutes and retries only temporary
+  connection or GitHub server failures once.
 - Includes dark and light GitHub-inspired themes, check filters, search, and a
   mobile-responsive report.
 - Handles missing repositories, invalid tokens, API limits, timeouts, empty
@@ -36,10 +45,10 @@ and a prioritized improvement plan.
 | Repository metadata | 10 | Description, topics, license, archive status |
 | README quality | 25 | Detail, setup, usage, badges, visuals |
 | Project structure | 15 | Source layout, manifest, `.gitignore`, modularity |
-| Tests | 15 | Test files, test configuration, coverage evidence |
-| CI/CD | 10 | Recognized workflow and visible status badge |
+| Tests | 15 | Test presence, implementation evidence, configuration, coverage |
+| CI/CD | 10 | Workflow, pinned Actions, permissions, visible status badge |
 | Documentation | 10 | Extended docs and project-governance files |
-| Security | 15 | Security policy, dependency updates, risky filenames, lock file |
+| Security | 15 | Policy, updates, risky filenames, bounded secret scan, lock file |
 | **Total** | **100** | Pass = full points, partial = half, fail = zero |
 
 Stars, forks, and issue counts are displayed but never scored. Popularity is not
@@ -53,7 +62,8 @@ secrets.
 Streamlit UI -> Review service -> GitHub client -> GitHub REST API
                      |
                      +-> Analyzer -> Scoring -> Suggestions
-                              \____ domain models ____/
+                              +-> Markdown / JSON reporting
+                              \_______ domain models _______/
 ```
 
 The analyzer and scoring rules contain no Streamlit or Requests code, which
@@ -73,9 +83,10 @@ tradeoffs.
   in CI.
 - **Setuptools** builds and installs the `src/`-layout Python package.
 
-The project deliberately avoids a GitHub SDK: only three endpoints are needed,
-and a small Requests adapter keeps error handling and response validation
-visible.
+The project deliberately avoids a GitHub SDK: a small set of REST endpoints is
+enough, and a small Requests adapter keeps error handling and response
+validation visible. It also deliberately avoids AI SDKs: deterministic rules
+make every point explainable, repeatable, fast, and free to run.
 
 ## Local setup
 
@@ -110,14 +121,19 @@ streamlit run streamlit_app.py
 
 1. Open the local Streamlit URL printed in the terminal.
 2. Enter `owner/repository` or a public repository URL.
-3. Select **Run review**.
+3. Select a **Review focus**, then select **Run review**. The focus prioritizes
+   suggestions but never changes the numerical rubric.
 4. Use **Overview** for the score and highest-impact actions, **Checks** to
-   filter the 27 evidence-backed results, and **Recommendations** for the full
+   filter the evidence-backed results, and **Recommendations** for the full
    improvement plan.
-5. Open **Settings** to change appearance or provide an optional GitHub token.
+5. Download a deterministic Markdown or JSON report when you want to save or
+   share the review.
+6. Open **Settings** to change appearance or provide an optional GitHub token.
 
-Try `longinhk/github-portfolio-reviewer` to review this project itself. A normal
-review makes three GitHub API requests; an empty repository makes two.
+Try `longinhk/github-portfolio-reviewer` to review this project itself. A review
+makes three base GitHub requests plus at most ten bounded text-file requests.
+Repeating the same review in one browser session within five minutes uses the
+local response cache.
 
 ### Optional local token
 
@@ -129,7 +145,8 @@ cp .streamlit/secrets.toml.example .streamlit/secrets.toml
 
 Never commit `.streamlit/secrets.toml`; it is excluded by `.gitignore`. For
 public repositories, use no token or a least-privilege token that can read public
-repository metadata.
+repository metadata. This is a GitHub token only; the application never asks for
+an AI service key.
 
 ## Quality checks
 
@@ -162,10 +179,14 @@ repository owner's GitHub and Streamlit accounts.
 ## Limitations
 
 - Only public GitHub repositories are supported.
-- The analyzer reads README content but otherwise checks file paths rather than
-  source or configuration contents.
-- Test presence does not prove test quality or execution success.
-- Security checks cannot discover arbitrary embedded secrets or vulnerable code.
+- Content inspection is intentionally limited to ten small, selected text files
+  per review to protect latency and GitHub API allowance.
+- Python test inspection recognizes implementation signals but does not execute
+  tests or prove correctness.
+- Workflow and configuration parsing is deliberately conservative and may
+  return partial credit when evidence is ambiguous.
+- The high-confidence secret scan is bounded and is not a substitute for Git
+  history scanning, dependency auditing, or a professional security review.
 - GitHub may truncate file trees for very large repositories; those reports are
   clearly marked provisional.
 - Heuristics favor common project conventions and can produce false positives or
@@ -181,10 +202,10 @@ repository owner's GitHub and Streamlit accounts.
 
 ## Suggested next improvements
 
-- Add bounded inspection of CI and dependency configuration content.
-- Export a report as Markdown or JSON.
 - Let users compare two snapshots of the same repository.
-- Add ecosystem-specific rule profiles without changing the core score silently.
+- Add JavaScript/TypeScript-specific content checks beside the Python checks.
+- Display live GitHub Actions status when API allowance permits.
+- Add optional self-hosted persistence for teams that need report history.
 
 ## License decision
 

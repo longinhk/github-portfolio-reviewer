@@ -22,10 +22,13 @@ python -m pytest
 ```
 
 Tests must not call the real GitHub API. Inject a fake session or client and add
-cases for both success and expected failures.
+cases for both success and expected failures. Analyzer changes must remain
+deterministic and must never execute code from the reviewed repository.
 
 ## Pull requests
 
 Keep changes focused. Explain the user-visible behavior, important design
 tradeoffs, and how the change was tested. If a scoring weight changes, preserve
-the 100-point total and update the rubric documentation.
+the 100-point total, increment the ruleset version, and update the rubric
+documentation. Do not add an AI service dependency to scoring or core report
+generation.

@@ -2,7 +2,12 @@
 
 from collections.abc import Callable
 
-from github_portfolio_reviewer.models import RepositoryReference, RepositorySnapshot
+from github_portfolio_reviewer.models import (
+    CheckId,
+    RepositoryReference,
+    RepositorySnapshot,
+    ReviewMode,
+)
 from github_portfolio_reviewer.service import review_repository
 
 
@@ -27,15 +32,17 @@ def test_review_repository_runs_complete_pipeline_offline(
     report = review_repository(
         "example/project",
         client=client,  # type: ignore[arg-type]
+        review_mode=ReviewMode.BACKEND,
         progress=progress_messages.append,
     )
 
     assert client.reference == RepositoryReference("example", "project")
     assert report.repository == client.snapshot
-    assert len(report.checks) == 27
+    assert len(report.checks) == len(CheckId)
+    assert report.review_mode == ReviewMode.BACKEND
     assert 0 <= report.score <= 100
     assert progress_messages == [
-        "Fetching repository metadata and file tree",
-        "Inspecting README, structure, tests, CI, docs, and security",
-        "Calculating the transparent 100-point score",
+        "1/3 Fetching repository evidence from GitHub",
+        "2/3 Inspecting deterministic portfolio signals",
+        "3/3 Calculating the transparent 100-point score",
     ]

@@ -8,9 +8,12 @@ from github_portfolio_reviewer.models import (
     CheckId,
     CheckStatus,
     RepositorySnapshot,
+    ReviewMode,
     ReviewReport,
     ScoredCheck,
 )
+
+RULESET_VERSION = "1.1.0"
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,13 +114,19 @@ CHECK_SPECIFICATIONS: dict[CheckId, CheckSpecification] = {
     CheckId.TEST_FILES: CheckSpecification(
         Category.TESTS,
         "Automated tests",
-        10,
+        7,
         "Add a tests/ directory with representative success, edge, and failure cases.",
+    ),
+    CheckId.TEST_QUALITY: CheckSpecification(
+        Category.TESTS,
+        "Implemented test behavior",
+        4,
+        "Replace placeholder tests with deterministic cases that exercise behavior and assert outcomes.",
     ),
     CheckId.TEST_CONFIGURATION: CheckSpecification(
         Category.TESTS,
         "Test configuration",
-        3,
+        2,
         "Add explicit test configuration and document the command used to run tests.",
     ),
     CheckId.COVERAGE: CheckSpecification(
@@ -129,8 +138,20 @@ CHECK_SPECIFICATIONS: dict[CheckId, CheckSpecification] = {
     CheckId.CI_WORKFLOW: CheckSpecification(
         Category.CI_CD,
         "CI workflow configuration",
-        8,
+        4,
         "Add a CI workflow that installs dependencies, lints code, and runs tests.",
+    ),
+    CheckId.ACTIONS_PINNED: CheckSpecification(
+        Category.CI_CD,
+        "Pinned GitHub Actions",
+        2,
+        "Pin third-party GitHub Actions to full commit SHAs and review updates deliberately.",
+    ),
+    CheckId.WORKFLOW_PERMISSIONS: CheckSpecification(
+        Category.CI_CD,
+        "Least-privilege workflow permissions",
+        2,
+        "Declare explicit read-only workflow permissions and grant write access only to jobs that require it.",
     ),
     CheckId.CI_BADGE: CheckSpecification(
         Category.CI_CD,
@@ -165,20 +186,26 @@ CHECK_SPECIFICATIONS: dict[CheckId, CheckSpecification] = {
     CheckId.SECURITY_POLICY: CheckSpecification(
         Category.SECURITY,
         "Security policy",
-        3,
+        2,
         "Add SECURITY.md explaining how vulnerabilities should be reported privately.",
     ),
     CheckId.DEPENDENCY_UPDATES: CheckSpecification(
         Category.SECURITY,
         "Automated dependency updates",
-        4,
+        3,
         "Configure Dependabot or Renovate for the dependency ecosystems you use.",
     ),
     CheckId.NO_SENSITIVE_FILES: CheckSpecification(
         Category.SECURITY,
         "No risky tracked filenames",
-        5,
+        3,
         "Inspect flagged files, remove real secrets from history, rotate them, and add ignores.",
+    ),
+    CheckId.NO_DETECTED_SECRETS: CheckSpecification(
+        Category.SECURITY,
+        "No detected credential patterns",
+        4,
+        "Remove detected credentials from history, rotate them immediately, and use repository secrets or environment variables.",
     ),
     CheckId.LOCK_FILE: CheckSpecification(
         Category.SECURITY,
@@ -186,6 +213,40 @@ CHECK_SPECIFICATIONS: dict[CheckId, CheckSpecification] = {
         3,
         "Commit an appropriate lock file or pin deployable application dependencies.",
     ),
+}
+
+CHECK_TARGETS: dict[CheckId, str] = {
+    CheckId.DESCRIPTION: "GitHub About section",
+    CheckId.TOPICS: "GitHub About section",
+    CheckId.LICENSE: "LICENSE",
+    CheckId.ACTIVE: "Repository settings",
+    CheckId.README_EXISTS: "README.md",
+    CheckId.README_DETAIL: "README.md",
+    CheckId.README_INSTALLATION: "README.md",
+    CheckId.README_USAGE: "README.md",
+    CheckId.README_BADGES: "README.md",
+    CheckId.README_VISUALS: "README.md",
+    CheckId.SOURCE_LAYOUT: "src/ or application package",
+    CheckId.DEPENDENCY_MANIFEST: "pyproject.toml or equivalent",
+    CheckId.GITIGNORE: ".gitignore",
+    CheckId.MODULARITY: "Production source modules",
+    CheckId.TEST_FILES: "tests/",
+    CheckId.TEST_QUALITY: "Test implementation",
+    CheckId.TEST_CONFIGURATION: "Test configuration",
+    CheckId.COVERAGE: "Coverage configuration",
+    CheckId.CI_WORKFLOW: ".github/workflows/",
+    CheckId.ACTIONS_PINNED: ".github/workflows/",
+    CheckId.WORKFLOW_PERMISSIONS: ".github/workflows/",
+    CheckId.CI_BADGE: "README.md",
+    CheckId.DOCS: "docs/",
+    CheckId.CONTRIBUTING: "CONTRIBUTING.md",
+    CheckId.CODE_OF_CONDUCT: "CODE_OF_CONDUCT.md",
+    CheckId.CHANGELOG: "CHANGELOG.md",
+    CheckId.SECURITY_POLICY: "SECURITY.md",
+    CheckId.DEPENDENCY_UPDATES: ".github/dependabot.yml",
+    CheckId.NO_SENSITIVE_FILES: "Tracked filenames",
+    CheckId.NO_DETECTED_SECRETS: "Inspected repository text files",
+    CheckId.LOCK_FILE: "Dependency lock file",
 }
 
 STATUS_FACTORS = {
@@ -196,12 +257,20 @@ STATUS_FACTORS = {
 
 
 def score_repository(
-    snapshot: RepositorySnapshot, findings: tuple[AnalysisFinding, ...]
+    snapshot: RepositorySnapshot,
+    findings: tuple[AnalysisFinding, ...],
+    *,
+    review_mode: ReviewMode = ReviewMode.GENERAL,
 ) -> ReviewReport:
     """Apply the documented rubric to analysis findings."""
     _validate_rubric(findings)
     checks = tuple(_score_finding(finding) for finding in findings)
-    return ReviewReport(repository=snapshot, checks=checks)
+    return ReviewReport(
+        repository=snapshot,
+        checks=checks,
+        review_mode=review_mode,
+        ruleset_version=RULESET_VERSION,
+    )
 
 
 def score_band(score: float) -> str:
@@ -229,12 +298,16 @@ def _score_finding(finding: AnalysisFinding) -> ScoredCheck:
         points=points,
         max_points=specification.max_points,
         recommendation=specification.recommendation,
+        sources=finding.sources,
+        target=CHECK_TARGETS[finding.check_id],
     )
 
 
 def _validate_rubric(findings: tuple[AnalysisFinding, ...]) -> None:
     if set(CHECK_SPECIFICATIONS) != set(CheckId):
         raise RuntimeError("Every analysis check must have exactly one scoring rule.")
+    if set(CHECK_TARGETS) != set(CheckId):
+        raise RuntimeError("Every analysis check must have exactly one target.")
     if sum(spec.max_points for spec in CHECK_SPECIFICATIONS.values()) != 100:
         raise RuntimeError("Scoring-rule weights must total 100 points.")
 
