@@ -2,9 +2,10 @@
 
 ## Scope
 
-This application analyzes public repository metadata, README text, and file
-paths. It is not a secret scanner, dependency auditor, or security
-certification. A risky filename is only a prompt for manual inspection.
+This application analyzes public repository metadata, README text, file paths,
+and a bounded allowlist of small text files. Its high-confidence pattern checks
+are not a complete secret scan, dependency audit, or security certification. A
+risky filename or pattern is only a prompt for manual inspection.
 
 ## Reporting a vulnerability
 
@@ -22,3 +23,5 @@ The optional GitHub token is sent only in the GitHub API authorization header.
 The application does not intentionally log, persist, or include it in reports.
 Use the least privilege needed for reading public repository metadata and revoke
 the token if you suspect exposure.
+
+The application does not use an AI API or accept an AI model key.
