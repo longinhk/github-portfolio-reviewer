@@ -3,6 +3,7 @@
 from github_portfolio_reviewer.models import (
     CheckId,
     CheckStatus,
+    ReviewMode,
     ReviewReport,
     ScoredCheck,
     Suggestion,
@@ -13,11 +14,14 @@ HIGH_PRIORITY_CHECKS = {
     CheckId.DEPENDENCY_MANIFEST,
     CheckId.LICENSE,
     CheckId.NO_SENSITIVE_FILES,
+    CheckId.NO_DETECTED_SECRETS,
     CheckId.README_EXISTS,
     CheckId.SOURCE_LAYOUT,
     CheckId.TEST_FILES,
+    CheckId.TEST_QUALITY,
 }
 MEDIUM_PRIORITY_CHECKS = {
+    CheckId.ACTIONS_PINNED,
     CheckId.DEPENDENCY_UPDATES,
     CheckId.GITIGNORE,
     CheckId.LOCK_FILE,
@@ -25,6 +29,7 @@ MEDIUM_PRIORITY_CHECKS = {
     CheckId.README_INSTALLATION,
     CheckId.README_USAGE,
     CheckId.SECURITY_POLICY,
+    CheckId.WORKFLOW_PERMISSIONS,
 }
 
 CASCADE_CHECKS: dict[CheckId, set[CheckId]] = {
@@ -35,9 +40,58 @@ CASCADE_CHECKS: dict[CheckId, set[CheckId]] = {
         CheckId.README_BADGES,
         CheckId.README_VISUALS,
     },
-    CheckId.TEST_FILES: {CheckId.TEST_CONFIGURATION, CheckId.COVERAGE},
-    CheckId.CI_WORKFLOW: {CheckId.CI_BADGE},
+    CheckId.TEST_FILES: {
+        CheckId.TEST_QUALITY,
+        CheckId.TEST_CONFIGURATION,
+        CheckId.COVERAGE,
+    },
+    CheckId.CI_WORKFLOW: {
+        CheckId.ACTIONS_PINNED,
+        CheckId.WORKFLOW_PERMISSIONS,
+        CheckId.CI_BADGE,
+    },
     CheckId.SOURCE_LAYOUT: {CheckId.MODULARITY},
+}
+
+MODE_FOCUS_CHECKS: dict[ReviewMode, set[CheckId]] = {
+    ReviewMode.GENERAL: set(),
+    ReviewMode.PYTHON: {
+        CheckId.SOURCE_LAYOUT,
+        CheckId.DEPENDENCY_MANIFEST,
+        CheckId.MODULARITY,
+        CheckId.TEST_FILES,
+        CheckId.TEST_QUALITY,
+        CheckId.TEST_CONFIGURATION,
+        CheckId.COVERAGE,
+    },
+    ReviewMode.AI_ML: {
+        CheckId.README_DETAIL,
+        CheckId.README_USAGE,
+        CheckId.README_VISUALS,
+        CheckId.DOCS,
+        CheckId.TEST_QUALITY,
+        CheckId.COVERAGE,
+        CheckId.LOCK_FILE,
+    },
+    ReviewMode.DATA_SCIENCE: {
+        CheckId.README_DETAIL,
+        CheckId.README_USAGE,
+        CheckId.README_VISUALS,
+        CheckId.DOCS,
+        CheckId.TEST_QUALITY,
+        CheckId.LOCK_FILE,
+    },
+    ReviewMode.BACKEND: {
+        CheckId.CI_WORKFLOW,
+        CheckId.ACTIONS_PINNED,
+        CheckId.WORKFLOW_PERMISSIONS,
+        CheckId.TEST_FILES,
+        CheckId.TEST_QUALITY,
+        CheckId.SECURITY_POLICY,
+        CheckId.DEPENDENCY_UPDATES,
+        CheckId.NO_SENSITIVE_FILES,
+        CheckId.NO_DETECTED_SECRETS,
+    },
 }
 
 
@@ -52,7 +106,11 @@ def generate_suggestions(
         for check in incomplete
         if check.check_id not in suppressed
     ]
-    suggestions.sort(key=_suggestion_sort_key)
+    suggestions.sort(
+        key=lambda suggestion: _suggestion_sort_key(
+            suggestion, review_mode=report.review_mode
+        )
+    )
     if limit is not None:
         suggestions = suggestions[:limit]
     return tuple(suggestions)
@@ -76,6 +134,7 @@ def _to_suggestion(check: ScoredCheck) -> Suggestion:
         title=check.title,
         action=check.recommendation,
         potential_points=check.max_points - check.points,
+        check_id=check.check_id,
     )
 
 
@@ -92,10 +151,14 @@ def _priority_for(check: ScoredCheck) -> str:
     return "Low"
 
 
-def _suggestion_sort_key(suggestion: Suggestion) -> tuple[int, float, str]:
+def _suggestion_sort_key(
+    suggestion: Suggestion, *, review_mode: ReviewMode
+) -> tuple[int, int, float, str]:
     priority_order = {"High": 0, "Medium": 1, "Low": 2}
+    focused = suggestion.check_id in MODE_FOCUS_CHECKS[review_mode]
     return (
         priority_order[suggestion.priority],
+        0 if focused else 1,
         -suggestion.potential_points,
         suggestion.title,
     )

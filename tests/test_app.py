@@ -11,6 +11,7 @@ from github_portfolio_reviewer.app import (
     _error_presentation,
     _filter_checks,
     _projected_score,
+    _source_url,
     _updated_recent_repositories,
 )
 from github_portfolio_reviewer.github_client import (
@@ -24,6 +25,8 @@ from github_portfolio_reviewer.models import (
     CheckId,
     CheckStatus,
     RepositorySnapshot,
+    ReviewMode,
+    ReviewReport,
     ScoredCheck,
     Suggestion,
 )
@@ -59,6 +62,11 @@ def test_initial_page_renders_without_exceptions() -> None:
     assert app.title[0].value == "Repository review"
     assert any(button.label == "Run review" for button in app.button)
     assert any(button.label == "Use example" for button in app.button)
+    review_focus = next(
+        selectbox for selectbox in app.selectbox if selectbox.label == "Review focus"
+    )
+    assert review_focus.value == ReviewMode.GENERAL.value
+    assert any("No AI API" in caption.value for caption in app.caption)
 
 
 def test_report_page_renders_all_sections_without_exceptions(
@@ -84,9 +92,10 @@ def test_report_page_renders_all_sections_without_exceptions(
     assert any(button.label == "Run review" for button in app.button)
     assert [tab.label for tab in app.tabs] == [
         "Overview",
-        "Checks (27)",
+        f"Checks ({len(CheckId)})",
         "Recommendations",
     ]
+    assert any("Portable reports" in caption.value for caption in app.caption)
 
 
 def test_check_counts_and_filters() -> None:
@@ -174,3 +183,17 @@ def test_expected_errors_have_specific_presentations() -> None:
     titles = {_error_presentation(error)[0] for error in errors}
 
     assert len(titles) == len(errors)
+
+
+def test_source_url_encodes_branch_and_path(
+    make_snapshot: Callable[..., RepositorySnapshot],
+) -> None:
+    report = ReviewReport(
+        repository=make_snapshot(default_branch="feature/review"),
+        checks=(),
+    )
+
+    assert _source_url(report, "docs/review notes.md") == (
+        "https://github.com/example/project/blob/"
+        "feature%2Freview/docs/review%20notes.md"
+    )

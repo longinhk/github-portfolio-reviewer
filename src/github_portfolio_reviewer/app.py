@@ -1,14 +1,17 @@
 """Streamlit interface for the GitHub Portfolio Reviewer."""
 
+import hashlib
 from collections.abc import Sequence
 from datetime import datetime
 from html import escape
+from urllib.parse import quote
 
 import streamlit as st
 
 from github_portfolio_reviewer.github_client import (
     AuthenticationError,
     GitHubAPIError,
+    GitHubClient,
     GitHubClientError,
     InvalidRepositoryError,
     RateLimitError,
@@ -18,9 +21,14 @@ from github_portfolio_reviewer.models import (
     Category,
     CheckId,
     CheckStatus,
+    ReviewMode,
     ReviewReport,
     ScoredCheck,
     Suggestion,
+)
+from github_portfolio_reviewer.reporting import (
+    render_json_report,
+    render_markdown_report,
 )
 from github_portfolio_reviewer.scoring import score_band
 from github_portfolio_reviewer.service import review_repository
@@ -46,36 +54,6 @@ CATEGORY_IMPACT = {
     Category.SECURITY: "Shows responsible handling of dependencies and sensitive information.",
 }
 
-CHECK_TARGETS = {
-    CheckId.DESCRIPTION: "GitHub About section",
-    CheckId.TOPICS: "GitHub About section",
-    CheckId.LICENSE: "LICENSE",
-    CheckId.ACTIVE: "Repository settings",
-    CheckId.README_EXISTS: "README.md",
-    CheckId.README_DETAIL: "README.md",
-    CheckId.README_INSTALLATION: "README.md",
-    CheckId.README_USAGE: "README.md",
-    CheckId.README_BADGES: "README.md",
-    CheckId.README_VISUALS: "README.md",
-    CheckId.SOURCE_LAYOUT: "src/ or app/",
-    CheckId.DEPENDENCY_MANIFEST: "pyproject.toml or equivalent",
-    CheckId.GITIGNORE: ".gitignore",
-    CheckId.MODULARITY: "Source modules",
-    CheckId.TEST_FILES: "tests/",
-    CheckId.TEST_CONFIGURATION: "Test configuration",
-    CheckId.COVERAGE: "Coverage configuration",
-    CheckId.CI_WORKFLOW: ".github/workflows/",
-    CheckId.CI_BADGE: "README.md",
-    CheckId.DOCS: "docs/",
-    CheckId.CONTRIBUTING: "CONTRIBUTING.md",
-    CheckId.CODE_OF_CONDUCT: "CODE_OF_CONDUCT.md",
-    CheckId.CHANGELOG: "CHANGELOG.md",
-    CheckId.SECURITY_POLICY: "SECURITY.md",
-    CheckId.DEPENDENCY_UPDATES: ".github/dependabot.yml",
-    CheckId.NO_SENSITIVE_FILES: "Tracked files and Git history",
-    CheckId.LOCK_FILE: "Dependency lock file",
-}
-
 
 def main() -> None:
     """Render the repository-review application."""
@@ -96,10 +74,10 @@ def main() -> None:
     token = _render_product_bar()
     if not has_report:
         _render_introduction()
-    repository_input, submitted = _render_review_form(compact=has_report)
+    repository_input, review_mode, submitted = _render_review_form(compact=has_report)
     _render_repository_shortcuts(compact=has_report)
 
-    if submitted and _run_review(repository_input, token):
+    if submitted and _run_review(repository_input, token, review_mode):
         st.rerun()
 
     report = st.session_state.get("review_report")
@@ -172,9 +150,13 @@ def _render_introduction() -> None:
         "See the engineering signals a recruiter can verify—and the highest-impact "
         "changes to make next."
     )
+    st.caption(
+        "Deterministic Python rules only. No AI API, model key, or paid inference "
+        "service is required."
+    )
 
 
-def _render_review_form(*, compact: bool) -> tuple[str, bool]:
+def _render_review_form(*, compact: bool) -> tuple[str, ReviewMode, bool]:
     with st.form("repository-review-form", border=True):
         heading = (
             "Review another repository" if compact else "Review a public repository"
@@ -183,7 +165,9 @@ def _render_review_form(*, compact: bool) -> tuple[str, bool]:
             f'<div class="form-heading">{heading}</div>',
             unsafe_allow_html=True,
         )
-        input_column, button_column = st.columns([5, 1.35], vertical_alignment="bottom")
+        input_column, focus_column, button_column = st.columns(
+            [4.1, 2, 1.35], vertical_alignment="bottom"
+        )
         with input_column:
             repository_input = st.text_input(
                 "Repository",
@@ -191,18 +175,29 @@ def _render_review_form(*, compact: bool) -> tuple[str, bool]:
                 key="repository_input",
                 help="Enter owner/repository or a public GitHub repository URL.",
             )
+        with focus_column:
+            review_mode_label = st.selectbox(
+                "Review focus",
+                [mode.value for mode in ReviewMode],
+                key="review_mode",
+                help=(
+                    "Changes recommendation order only. The deterministic 100-point "
+                    "rubric stays comparable across every focus."
+                ),
+            )
         with button_column:
             submitted = st.form_submit_button(
                 "Run review", type="primary", use_container_width=True
             )
         st.markdown(
             '<div class="scope-line">'
-            "<span>27 deterministic checks</span><span>Read-only GitHub access</span>"
-            "<span>No repository changes</span>"
+            f"<span>{len(CheckId)} deterministic checks</span>"
+            "<span>Read-only GitHub access</span>"
+            "<span>No AI API or model key</span>"
             "</div>",
             unsafe_allow_html=True,
         )
-    return repository_input, submitted
+    return repository_input, ReviewMode(review_mode_label), submitted
 
 
 def _render_repository_shortcuts(*, compact: bool) -> None:
@@ -249,17 +244,34 @@ def _secret_token() -> str | None:
     return value.strip() if isinstance(value, str) and value.strip() else None
 
 
-def _run_review(repository_input: str, token: str | None) -> bool:
+def _run_review(
+    repository_input: str,
+    token: str | None,
+    review_mode: ReviewMode,
+) -> bool:
     """Run a review and return whether a new report was stored."""
+    if not repository_input.strip():
+        st.error(
+            "**Repository address is required**\n\n"
+            "Enter owner/repository or a public GitHub repository URL."
+        )
+        return False
+
+    has_previous_report = isinstance(
+        st.session_state.get("review_report"), ReviewReport
+    )
     status = st.status("Starting repository review…", expanded=True)
     try:
         report = review_repository(
             repository_input,
-            token=token,
+            client=_review_client(token),
+            review_mode=review_mode,
             progress=status.write,
         )
     except GitHubClientError as error:
         title, guidance = _error_presentation(error)
+        if has_previous_report:
+            guidance += " Your previous successful report remains displayed below."
         status.update(label="Review failed", state="error", expanded=False)
         st.error(f"**{title}**\n\n{error}\n\n{guidance}")
         return False
@@ -268,6 +280,23 @@ def _run_review(repository_input: str, token: str | None) -> bool:
     st.session_state["review_report"] = report
     _remember_repository(report.repository.reference.full_name)
     return True
+
+
+def _review_client(token: str | None) -> GitHubClient:
+    """Reuse one session-local client so its bounded response cache is effective."""
+    normalized = token.strip() if token else ""
+    fingerprint = (
+        hashlib.sha256(normalized.encode()).hexdigest() if normalized else "public"
+    )
+    existing = st.session_state.get("_github_client")
+    if (
+        not isinstance(existing, GitHubClient)
+        or st.session_state.get("_github_client_fingerprint") != fingerprint
+    ):
+        existing = GitHubClient(token=normalized or None)
+        st.session_state["_github_client"] = existing
+        st.session_state["_github_client_fingerprint"] = fingerprint
+    return existing
 
 
 def _error_presentation(error: GitHubClientError) -> tuple[str, str]:
@@ -306,8 +335,9 @@ def _render_empty_workspace() -> None:
         '<div class="empty-copy">'
         '<h2 class="section-heading">WHAT THE REVIEW COVERS</h2>'
         "<h3>One report, seven engineering areas</h3>"
-        "<p>The reviewer reads public metadata, README text, and file paths. "
-        "It does not clone, execute, or modify the repository.</p>"
+        "<p>The reviewer uses the GitHub REST API and deterministic Python rules. "
+        "It inspects a bounded set of text files, but never clones, executes, or "
+        "modifies the repository—and it never calls an AI service.</p>"
         '<div class="scope-pills">'
         "<span>Metadata</span><span>README</span><span>Structure</span>"
         "<span>Tests</span><span>CI/CD</span><span>Documentation</span>"
@@ -315,7 +345,7 @@ def _render_empty_workspace() -> None:
         "</div></div>"
         '<div class="workflow-list">'
         "<div><span>01</span><strong>Fetch</strong><small>Public GitHub signals</small></div>"
-        "<div><span>02</span><strong>Inspect</strong><small>27 explicit checks</small></div>"
+        f"<div><span>02</span><strong>Inspect</strong><small>{len(CheckId)} explicit checks</small></div>"
         "<div><span>03</span><strong>Improve</strong><small>Prioritized next actions</small></div>"
         "</div></div>",
         unsafe_allow_html=True,
@@ -361,9 +391,15 @@ def _render_report(report: ReviewReport) -> None:
             "GitHub returned a truncated file tree. Missing file-based signals receive "
             "partial credit, so this score is provisional."
         )
+    if repository.inspection_truncated:
+        st.info(
+            "The bounded content-inspection limit was reached. Findings describe the "
+            "sampled evidence and do not claim a full-repository code scan."
+        )
 
     _render_score_summary(report)
     _render_repository_facts(report)
+    _render_downloads(report)
 
     overview_tab, checks_tab, suggestions_tab = st.tabs(
         ["Overview", f"Checks ({len(report.checks)})", "Recommendations"]
@@ -416,12 +452,42 @@ def _render_repository_facts(report: ReviewReport) -> None:
         ("FORKS", f"{repository.forks:,}"),
         ("OPEN ISSUES", f"{repository.open_issues:,}"),
         ("LAST PUSH", _format_date(repository.pushed_at)),
+        ("REVIEW FOCUS", report.review_mode.value),
+        ("RULESET", report.ruleset_version),
     )
     fact_markup = "".join(
         f'<div class="repo-fact"><dt>{escape(label)}</dt><dd>{escape(value)}</dd></div>'
         for label, value in facts
     )
     st.markdown(f'<dl class="repo-facts">{fact_markup}</dl>', unsafe_allow_html=True)
+
+
+def _render_downloads(report: ReviewReport) -> None:
+    """Render deterministic Markdown and JSON report downloads."""
+    filename = report.repository.reference.full_name.replace("/", "-")
+    label_column, markdown_column, json_column = st.columns(
+        [4.2, 1.25, 1.25], vertical_alignment="center"
+    )
+    with label_column:
+        st.caption(
+            "Portable reports contain findings and evidence—not README or source content."
+        )
+    with markdown_column:
+        st.download_button(
+            "Download Markdown",
+            render_markdown_report(report),
+            file_name=f"{filename}-review.md",
+            mime="text/markdown",
+            use_container_width=True,
+        )
+    with json_column:
+        st.download_button(
+            "Download JSON",
+            render_json_report(report),
+            file_name=f"{filename}-review.json",
+            mime="application/json",
+            use_container_width=True,
+        )
 
 
 def _render_top_actions(
@@ -475,7 +541,9 @@ def _render_category_scores(report: ReviewReport) -> None:
     )
     st.markdown(
         '<div class="method-note"><strong>Scoring:</strong> pass = full points, '
-        "partial = half, missing = zero. Popularity metrics are not scored.</div>",
+        "partial = half, missing = zero. Popularity metrics are not scored. "
+        f"Ruleset {escape(report.ruleset_version)}; review focus changes recommendation "
+        "order only.</div>",
         unsafe_allow_html=True,
     )
 
@@ -539,16 +607,38 @@ def _render_checks(report: ReviewReport) -> None:
             f"<span>{escape(category)}</span>"
             f"<small>{_format_points(earned)}/{available} shown</small>"
             "</div>"
-            f'<div class="check-list">{_check_rows_markup(matching)}</div>',
+            f'<div class="check-list">{_check_rows_markup(matching, report)}</div>',
             unsafe_allow_html=True,
         )
 
 
-def _check_rows_markup(checks: Sequence[ScoredCheck]) -> str:
+def _check_rows_markup(checks: Sequence[ScoredCheck], report: ReviewReport) -> str:
     rows: list[str] = []
     for check in checks:
         status = STATUS_LABELS[check.status]
         status_class = check.status.value
+        source_links = " ".join(
+            '<a href="'
+            f'{escape(_source_url(report, source))}" target="_blank" '
+            'rel="noopener noreferrer"><code>'
+            f"{escape(source)}</code></a>"
+            for source in check.sources
+        )
+        source_markup = (
+            f'<div class="target-file"><span>EVIDENCE FILES</span>{source_links}</div>'
+            if source_links
+            else ""
+        )
+        recommendation_markup = ""
+        if check.status != CheckStatus.PASS:
+            recommendation_markup = (
+                '<div class="recommendation-details">'
+                "<div><span>TARGET</span>"
+                f"<p><code>{escape(check.target)}</code></p></div>"
+                "<div><span>NEXT STEP</span>"
+                f"<p>{escape(check.recommendation)}</p></div>"
+                "</div>"
+            )
         rows.append(
             '<div class="check-row">'
             '<div class="check-header">'
@@ -558,9 +648,17 @@ def _check_rows_markup(checks: Sequence[ScoredCheck]) -> str:
             f"{_format_points(check.points)}/{check.max_points}"
             "</span></div>"
             f'<div class="check-evidence">{escape(check.evidence)}</div>'
+            f"{source_markup}{recommendation_markup}"
             "</div>"
         )
     return "".join(rows)
+
+
+def _source_url(report: ReviewReport, path: str) -> str:
+    """Return a GitHub blob URL for one evidence path."""
+    branch = quote(report.repository.default_branch, safe="")
+    encoded_path = quote(path, safe="/")
+    return f"{report.repository.html_url}/blob/{branch}/{encoded_path}"
 
 
 def _filter_checks(
@@ -620,7 +718,6 @@ def _render_suggestion(
 ) -> None:
     priority_class = suggestion.priority.casefold()
     source_check = _source_check(report, suggestion)
-    target = CHECK_TARGETS.get(source_check.check_id, "Repository")
     details = ""
     if detailed:
         details = (
@@ -643,7 +740,7 @@ def _render_suggestion(
         "</div>"
         f'<p class="recommendation-action">{escape(suggestion.action)}</p>'
         '<div class="target-file"><span>TARGET</span>'
-        f"<code>{escape(target)}</code></div>"
+        f"<code>{escape(source_check.target)}</code></div>"
         f"{details}</div>"
         '<span class="potential-points">'
         f"+{_format_points(suggestion.potential_points)} pts"
@@ -655,7 +752,13 @@ def _render_suggestion(
 def _source_check(report: ReviewReport, suggestion: Suggestion) -> ScoredCheck:
     """Find the scored check that produced a suggestion."""
     for check in report.checks:
-        if check.title == suggestion.title and check.category == suggestion.category:
+        if suggestion.check_id is not None and check.check_id == suggestion.check_id:
+            return check
+        if (
+            suggestion.check_id is None
+            and check.title == suggestion.title
+            and check.category == suggestion.category
+        ):
             return check
     raise ValueError(f"Suggestion has no matching check: {suggestion.title}")
 

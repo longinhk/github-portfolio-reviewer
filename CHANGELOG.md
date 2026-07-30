@@ -13,6 +13,16 @@ All notable changes to this project are documented here. The format follows
 - Status, category, and text filters for repository checks.
 - Detailed recommendation issues with target files and current evidence.
 - Responsive mobile layouts and specific GitHub API error guidance.
+- Bounded inspection of Python tests, project configuration, GitHub Actions,
+  Dependabot, security policy, and high-confidence secret patterns.
+- Review focuses for General, Python, AI/ML, data-science, and backend internship
+  applications without changing the comparable score.
+- Stable Markdown and JSON report downloads that exclude raw repository content.
+- Five-minute session-local caching and one bounded retry for temporary GitHub
+  or connection failures.
+- Versioned scoring rules with direct evidence-file links and explicit next
+  steps for incomplete checks.
+- Clear guarantees that no AI API, model key, or paid inference service is used.
 
 ## [0.1.0] - 2026-07-26
 
