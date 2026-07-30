@@ -23,6 +23,8 @@ All notable changes to this project are documented here. The format follows
 - Versioned scoring rules with direct evidence-file links and explicit next
   steps for incomplete checks.
 - Clear guarantees that no AI API, model key, or paid inference service is used.
+- MIT License approved by the repository owner and recorded under the GitHub
+  identity `longinhk`.
 
 ## [0.1.0] - 2026-07-26
 

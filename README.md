@@ -207,8 +207,7 @@ repository owner's GitHub and Streamlit accounts.
 - Display live GitHub Actions status when API allowance permits.
 - Add optional self-hosted persistence for teams that need report history.
 
-## License decision
+## License
 
-No license has been chosen yet. The repository owner should select one that fits
-their intended reuse policy and then add the standard `LICENSE` file. This is
-intentionally not automated because licensing is an ownership decision.
+This project is available under the [MIT License](LICENSE). Copyright © 2026
+`longinhk`.
