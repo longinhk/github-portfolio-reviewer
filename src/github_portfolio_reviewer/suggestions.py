@@ -3,6 +3,7 @@
 from github_portfolio_reviewer.models import (
     CheckId,
     CheckStatus,
+    EvidenceConfidence,
     ReviewMode,
     ReviewReport,
     ScoredCheck,
@@ -98,8 +99,14 @@ MODE_FOCUS_CHECKS: dict[ReviewMode, set[CheckId]] = {
 def generate_suggestions(
     report: ReviewReport, *, limit: int | None = 8
 ) -> tuple[Suggestion, ...]:
-    """Return deduplicated actions ordered by risk and potential score gain."""
-    incomplete = [check for check in report.checks if check.status != CheckStatus.PASS]
+    """Return evidence-backed actions ordered by risk and potential score gain."""
+    incomplete = [
+        check
+        for check in report.checks
+        if check.status != CheckStatus.PASS
+        and check.confidence
+        not in {EvidenceConfidence.UNVERIFIED, EvidenceConfidence.PROVISIONAL}
+    ]
     suppressed = _suppressed_check_ids(incomplete)
     suggestions = [
         _to_suggestion(check)

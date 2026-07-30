@@ -10,6 +10,7 @@ from github_portfolio_reviewer.models import (
     Category,
     CheckId,
     CheckStatus,
+    EvidenceConfidence,
     RepositorySnapshot,
     ReviewMode,
 )
@@ -17,6 +18,7 @@ from github_portfolio_reviewer.scoring import (
     CHECK_SPECIFICATIONS,
     CHECK_TARGETS,
     RULESET_VERSION,
+    score_band,
     score_repository,
 )
 
@@ -90,6 +92,10 @@ def test_real_empty_analysis_stays_within_score_bounds(
     assert 0 <= report.score <= 100
 
 
+def test_high_score_band_describes_presentation_not_job_readiness() -> None:
+    assert score_band(100) == "Very strong presentation"
+
+
 def test_report_records_ruleset_and_mode_without_changing_score(
     make_snapshot: Callable[..., RepositorySnapshot],
 ) -> None:
@@ -102,6 +108,7 @@ def test_report_records_ruleset_and_mode_without_changing_score(
     assert general.review_mode == ReviewMode.GENERAL
     assert ai_ml.review_mode == ReviewMode.AI_ML
     assert general.ruleset_version == ai_ml.ruleset_version == RULESET_VERSION
+    assert RULESET_VERSION == "1.2.0"
 
 
 def test_scoring_preserves_structured_sources_and_target(
@@ -114,6 +121,7 @@ def test_scoring_preserves_structured_sources_and_target(
         CheckStatus.PASS,
         "Two implemented tests found.",
         ("tests/test_service.py",),
+        EvidenceConfidence.SAMPLED,
     )
 
     report = score_repository(make_snapshot(), tuple(findings))
@@ -123,3 +131,4 @@ def test_scoring_preserves_structured_sources_and_target(
 
     assert check.sources == ("tests/test_service.py",)
     assert check.target == "Test implementation"
+    assert check.confidence == EvidenceConfidence.SAMPLED

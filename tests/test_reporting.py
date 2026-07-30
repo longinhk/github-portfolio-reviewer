@@ -7,6 +7,7 @@ from github_portfolio_reviewer.models import (
     Category,
     CheckId,
     CheckStatus,
+    EvidenceConfidence,
     RepositoryReference,
     RepositorySnapshot,
     RepositoryTextFile,
@@ -72,6 +73,7 @@ def _make_report() -> ReviewReport:
             recommendation="Add a copyable example | and its output.\nKeep it short.",
             sources=("README|draft.md", "docs/usage.md"),
             target="README.md | docs/usage.md",
+            confidence=EvidenceConfidence.SAMPLED,
         ),
     )
     return ReviewReport(
@@ -94,20 +96,33 @@ def test_json_report_has_stable_explicit_schema() -> None:
         "schema_version",
         "ruleset_version",
         "review_mode",
+        "review_scope",
         "repository",
         "score",
         "categories",
         "checks",
         "suggestions",
     ]
+    assert data["schema_version"] == "1.1"
     assert data["ruleset_version"] == "2.1.0"
     assert data["review_mode"] == "Python internship"
     assert data["score"] == {
+        "kind": "portfolio_presentation",
         "points": 5,
         "max_points": 100,
         "band": "Early stage",
     }
+    assert data["review_scope"] == {
+        "public_repository_only": True,
+        "default_branch_only": True,
+        "bounded_inspection": True,
+        "code_executed": False,
+        "ai_api_used": False,
+        "required_paid_services": False,
+    }
     assert data["repository"]["created_at"] == "2025-01-02T03:04:00+00:00"
+    assert data["checks"][0]["confidence"] == "verified"
+    assert data["checks"][1]["confidence"] == "sampled"
     assert data["checks"][1]["sources"] == ["README|draft.md", "docs/usage.md"]
     assert data["checks"][1]["target"] == "README.md | docs/usage.md"
     assert data["suggestions"][0]["check_id"] == "readme_usage"
@@ -133,7 +148,8 @@ def test_exports_exclude_raw_repository_content_and_timestamps() -> None:
 def test_markdown_report_contains_evidence_recommendations_and_no_ai_note() -> None:
     markdown = render_markdown_report(_make_report())
 
-    assert "# Repository review: example/portfolio" in markdown
+    assert "# Portfolio presentation review: example/portfolio" in markdown
+    assert "## Portfolio presentation score" in markdown
     assert "**5/100 — Early stage**" in markdown
     assert "deterministic ruleset 2.1.0" in markdown
     assert "**Python internship** focus" in markdown
@@ -142,6 +158,11 @@ def test_markdown_report_contains_evidence_recommendations_and_no_ai_note() -> N
     assert "README.md \\| docs/usage.md" in markdown
     assert "Add a copyable example \\| and its output.<br>Keep it short." in markdown
     assert "`readme_usage`" in markdown
+    assert "| PARTIAL | SAMPLED |" in markdown
+    assert (
+        "does not measure developer ability, code correctness, or security" in markdown
+    )
+    assert "Required paid services: $0" in markdown
     assert "No AI API is required." in markdown
 
 

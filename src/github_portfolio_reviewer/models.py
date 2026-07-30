@@ -25,6 +25,15 @@ class CheckStatus(StrEnum):
     FAIL = "fail"
 
 
+class EvidenceConfidence(StrEnum):
+    """How completely the evidence behind a finding was inspected."""
+
+    VERIFIED = "verified"
+    SAMPLED = "sampled"
+    UNVERIFIED = "unverified"
+    PROVISIONAL = "provisional"
+
+
 class CheckId(StrEnum):
     """Stable identifiers connecting analysis results to scoring rules."""
 
@@ -125,6 +134,7 @@ class AnalysisFinding:
     status: CheckStatus
     evidence: str
     sources: tuple[str, ...] = ()
+    confidence: EvidenceConfidence = EvidenceConfidence.VERIFIED
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,6 +151,7 @@ class ScoredCheck:
     recommendation: str
     sources: tuple[str, ...] = ()
     target: str = "Repository"
+    confidence: EvidenceConfidence = EvidenceConfidence.VERIFIED
 
 
 @dataclass(frozen=True, slots=True)
@@ -163,7 +174,7 @@ class ReviewReport:
 
     @property
     def score(self) -> float:
-        """Return the exact repository score out of 100."""
+        """Return the portfolio-presentation score out of 100."""
         return sum(check.points for check in self.checks)
 
     @property

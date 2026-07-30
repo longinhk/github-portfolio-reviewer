@@ -8,7 +8,7 @@ from github_portfolio_reviewer.models import ReviewReport, Suggestion
 from github_portfolio_reviewer.scoring import score_band
 from github_portfolio_reviewer.suggestions import generate_suggestions
 
-EXPORT_SCHEMA_VERSION = "1.0"
+EXPORT_SCHEMA_VERSION = "1.1"
 
 
 def report_to_dict(report: ReviewReport) -> dict[str, Any]:
@@ -23,6 +23,14 @@ def report_to_dict(report: ReviewReport) -> dict[str, Any]:
         "schema_version": EXPORT_SCHEMA_VERSION,
         "ruleset_version": report.ruleset_version,
         "review_mode": report.review_mode.value,
+        "review_scope": {
+            "public_repository_only": True,
+            "default_branch_only": True,
+            "bounded_inspection": True,
+            "code_executed": False,
+            "ai_api_used": False,
+            "required_paid_services": False,
+        },
         "repository": {
             "full_name": repository.reference.full_name,
             "url": repository.html_url,
@@ -42,6 +50,7 @@ def report_to_dict(report: ReviewReport) -> dict[str, Any]:
             "inspection_truncated": repository.inspection_truncated,
         },
         "score": {
+            "kind": "portfolio_presentation",
             "points": report.score,
             "max_points": 100,
             "band": score_band(report.score),
@@ -60,6 +69,7 @@ def report_to_dict(report: ReviewReport) -> dict[str, Any]:
                 "category": check.category.value,
                 "title": check.title,
                 "status": check.status.value,
+                "confidence": check.confidence.value,
                 "points": check.points,
                 "max_points": check.max_points,
                 "evidence": check.evidence,
@@ -90,7 +100,7 @@ def render_markdown_report(report: ReviewReport) -> str:
     repository = data["repository"]
     score = data["score"]
     lines = [
-        f"# Repository review: {repository['full_name']}",
+        f"# Portfolio presentation review: {repository['full_name']}",
         "",
         (
             f"[{repository['full_name']}]({repository['url']}) was reviewed with "
@@ -98,7 +108,7 @@ def render_markdown_report(report: ReviewReport) -> str:
             f"**{data['review_mode']}** focus."
         ),
         "",
-        "## Score",
+        "## Portfolio presentation score",
         "",
         f"**{_format_points(score['points'])}/{score['max_points']} — {score['band']}**",
         "",
@@ -137,15 +147,16 @@ def render_markdown_report(report: ReviewReport) -> str:
             "## Checks",
             "",
             (
-                "| Status | Category | Check | Points | Evidence | Sources | Target | "
-                "Recommendation |"
+                "| Status | Confidence | Category | Check | Points | Evidence | "
+                "Sources | Target | Recommendation |"
             ),
-            "| --- | --- | --- | ---: | --- | --- | --- | --- |",
+            "| --- | --- | --- | --- | ---: | --- | --- | --- | --- |",
         ]
     )
     lines.extend(
         _table_row(
             check["status"].upper(),
+            check["confidence"].upper(),
             check["category"],
             check["title"],
             f"{_format_points(check['points'])}/{check['max_points']}",
@@ -177,6 +188,26 @@ def render_markdown_report(report: ReviewReport) -> str:
         lines.append("No open recommendations in this ruleset.")
     lines.extend(
         [
+            "",
+            "## Interpretation and limitations",
+            "",
+            (
+                "This score measures visible portfolio and engineering signals. It "
+                "does not measure developer ability, code correctness, or security."
+            ),
+            "",
+            "- Only a public repository's default branch is reviewed.",
+            "- Repository code, tests, and workflows are never executed.",
+            (
+                "- Content inspection is bounded, so sampled, unverified, and "
+                "provisional evidence may require manual review."
+            ),
+            (
+                "- This is not a complete code review, dependency audit, secret scan, "
+                "or hiring decision."
+            ),
+            "",
+            "**Required paid services: $0.** No AI API is required.",
             "",
             "---",
             "",

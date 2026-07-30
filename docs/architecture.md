@@ -21,13 +21,15 @@ Application service (service.py)
 ## Module responsibilities
 
 - `models.py` defines immutable data exchanged between layers.
-- `github_client.py` validates input and converts GitHub JSON into a typed
-  `RepositorySnapshot`. It also owns bounded retries, caching, and text-file
-  sampling. Raw dictionaries do not escape this adapter.
+- `github_client.py` validates and normalizes repository input, then converts
+  GitHub JSON into a typed `RepositorySnapshot`. It also owns bounded retries,
+  caching, and bucketed text-file sampling. Raw dictionaries do not escape this
+  adapter.
 - `analyzer.py` applies deterministic checks to README text, metadata, file
   paths, and selected text evidence. It performs no HTTP requests and never
   executes repository code.
-- `scoring.py` maps findings to an explicit 100-point rubric.
+- `scoring.py` maps findings to an explicit 100-point portfolio-presentation
+  rubric and records the ruleset version.
 - `suggestions.py` converts incomplete checks into a prioritized, deduplicated
   action plan. A review focus changes ordering only, not points.
 - `reporting.py` creates stable Markdown and JSON exports from allow-listed
@@ -44,18 +46,40 @@ does not call an LLM, embedding model, or other AI service, so no AI API key is
 needed. Even the AI/ML internship focus is a deterministic suggestion filter.
 Keeping one comparable rubric avoids hidden score changes between focuses.
 
-### Bounded content inspection
+### Bounded, category-reserved content inspection
 
 A review requests repository metadata, the preferred README, and the recursive
-Git tree. It may then fetch at most ten small, allow-listed text files such as
-`pyproject.toml`, test files, workflows, `SECURITY.md`, and Dependabot
-configuration. It never clones the repository, executes code, downloads
-arbitrary binaries, or includes inspected content in exports.
+Git tree. It may then fetch at most ten small, allow-listed text files. Ruleset
+1.2 reserves fixed slots for one security policy, one dependency updater, one
+`pyproject.toml`, one explicit test configuration, one coverage configuration,
+two GitHub workflows, and three test sources. Paths are sorted deterministically
+inside each bucket, and unused slots are not borrowed. This prevents a repository
+with many workflows, for example, from consuming every test-inspection slot.
+
+The adapter never clones the repository, executes code, downloads arbitrary
+binaries, or includes inspected content in exports. Sensitive filenames are
+never fetched merely for optional inspection.
 
 The limit controls latency and protects GitHub's unauthenticated API allowance.
-When a check cannot verify the specific content it needs, it returns partial
-credit instead of pretending the missing evidence failed. A sufficient sampled
-signal can still pass while clearly remaining a bounded review.
+A check records evidence confidence separately from pass, partial, or fail:
+
+- `verified` means direct metadata, a path, or inspected content supports the
+  outcome;
+- `sampled` means a bounded subset supports it while relevant evidence remains;
+- `unverified` means a relevant path exists but no usable body was inspected;
+- `provisional` means GitHub truncated the tree, so apparent absence is
+  uncertain.
+
+Status determines points; confidence communicates evidence completeness without
+silently changing the rubric. A clean bounded credential scan is therefore
+sampled evidence, not a claim that the entire repository is secret-free.
+
+### Repository URL normalization
+
+The input parser accepts repository-root URLs plus GitHub `/tree/...` and
+`/blob/...` URLs, then reduces them to `owner/repository`. Query strings,
+fragments, ports, and unrelated GitHub subpages remain invalid. The normalized
+reference selects the repository only: analysis uses its default branch.
 
 ### Immutable snapshot
 
@@ -85,8 +109,20 @@ the problem or hide a permanent error.
 ### Truncated trees are incomplete evidence
 
 GitHub can truncate recursive trees for very large repositories. A feature that
-is found still passes; an absent path-based feature receives partial credit and
-the report is marked provisional.
+is found can still pass; apparent absence is marked provisional rather than
+presented as verified missing evidence.
+
+### Conservative convention and fixture handling
+
+Ruleset 1.2 recognizes common `doc/`, `docs/`, and `documentation/` layouts,
+documentation tooling and explicit external-documentation links, plus common
+changelog, news, history, release-note, and whats-new conventions. This reduces
+false negatives without fetching arbitrary documentation pages.
+
+Certificate, key, or credential-like fixtures under conventional test, fixture,
+example, or sample paths are advisory rather than automatic production-secret
+failures. Production-like locations still fail and require manual inspection.
+Neither result is a security audit.
 
 ### Safe portable reports
 
@@ -99,3 +135,11 @@ tree, and inspected contents therefore cannot appear accidentally.
 The next useful extension is a snapshot-comparison use case. It should compare
 two saved report schemas rather than coupling history to Streamlit state or the
 GitHub adapter.
+
+## Scope boundary
+
+This is a student portfolio application, not a production hiring or security
+system. The architecture intentionally omits accounts, persistent report
+history, payments, an AI service, and arbitrary code execution. Those omissions
+keep the project understandable and directly support its purpose: demonstrating
+Python design, API integration, deterministic reasoning, testing, and delivery.

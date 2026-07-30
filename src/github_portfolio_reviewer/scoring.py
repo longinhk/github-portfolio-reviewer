@@ -13,7 +13,7 @@ from github_portfolio_reviewer.models import (
     ScoredCheck,
 )
 
-RULESET_VERSION = "1.1.0"
+RULESET_VERSION = "1.2.0"
 
 
 @dataclass(frozen=True, slots=True)
@@ -276,7 +276,7 @@ def score_repository(
 def score_band(score: float) -> str:
     """Return a plain-language portfolio presentation band for a score."""
     if score >= 90:
-        return "Portfolio-ready"
+        return "Very strong presentation"
     if score >= 75:
         return "Strong"
     if score >= 60:
@@ -300,6 +300,7 @@ def _score_finding(finding: AnalysisFinding) -> ScoredCheck:
         recommendation=specification.recommendation,
         sources=finding.sources,
         target=CHECK_TARGETS[finding.check_id],
+        confidence=finding.confidence,
     )
 
 

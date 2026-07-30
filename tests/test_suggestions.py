@@ -6,6 +6,7 @@ from github_portfolio_reviewer.models import (
     AnalysisFinding,
     CheckId,
     CheckStatus,
+    EvidenceConfidence,
     RepositorySnapshot,
     ReviewMode,
 )
@@ -88,3 +89,27 @@ def test_review_mode_reorders_relevant_suggestions_without_changing_score(
         CheckId.README_EXISTS,
         CheckId.NO_DETECTED_SECRETS,
     }
+
+
+def test_incomplete_evidence_does_not_create_repository_change_suggestions(
+    make_snapshot: Callable[..., RepositorySnapshot],
+) -> None:
+    findings = [
+        AnalysisFinding(check_id, CheckStatus.PASS, "present") for check_id in CheckId
+    ]
+    for check_id, confidence in (
+        (CheckId.TOPICS, EvidenceConfidence.UNVERIFIED),
+        (CheckId.LOCK_FILE, EvidenceConfidence.PROVISIONAL),
+    ):
+        index = list(CheckId).index(check_id)
+        findings[index] = AnalysisFinding(
+            check_id,
+            CheckStatus.PARTIAL,
+            "Evidence could not be confirmed.",
+            confidence=confidence,
+        )
+
+    report = score_repository(make_snapshot(), tuple(findings))
+
+    assert report.score < 100
+    assert generate_suggestions(report, limit=None) == ()

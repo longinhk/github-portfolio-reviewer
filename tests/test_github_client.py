@@ -116,6 +116,15 @@ def encoded_blob(content: str | bytes) -> FakeResponse:
         ("example/project", "example/project"),
         (" https://github.com/example/project ", "example/project"),
         ("https://www.github.com/example/project.git", "example/project"),
+        ("https://github.com/example/project/tree/main", "example/project"),
+        (
+            "https://github.com/example/project/tree/feature/docs",
+            "example/project",
+        ),
+        (
+            "https://github.com/example/project/blob/main/src/app.py",
+            "example/project",
+        ),
         ("git@github.com:example/project.git", "example/project"),
     ],
 )
@@ -131,7 +140,10 @@ def test_parse_repository_reference_accepts_supported_inputs(
         "",
         "example",
         "https://gitlab.com/example/project",
-        "https://github.com/example/project/tree/main",
+        "example/project/tree/main",
+        "https://github.com/example/project/issues/1",
+        "https://github.com/example/project/tree",
+        "https://github.com/example/project/blob/main",
         "https://github.com:8443/example/project",
         "https://github.com/example/project?tab=readme",
         "-invalid/project",
@@ -193,8 +205,8 @@ def test_fetch_repository_builds_snapshot_and_expected_requests() -> None:
 
 def test_fetch_repository_collects_deterministic_bounded_text_evidence() -> None:
     contents = {
-        ".github/dependabot.yml": "version: 2\nupdates: []\n",
         "SECURITY.md": "# Security\n\nReport vulnerabilities privately.\n",
+        ".github/dependabot.yml": "version: 2\nupdates: []\n",
         "pyproject.toml": '[project]\nname = "example"\n',
         ".github/workflows/ci.yml": "permissions:\n  contents: read\n",
         "tests/test_a.py": "def test_a():\n    assert True\n",
@@ -239,14 +251,38 @@ def test_fetch_repository_collects_deterministic_bounded_text_evidence() -> None
     assert not any("sha-test-package" in url for url in requested_urls)
 
 
-def test_inspection_caps_blob_requests_at_ten_files() -> None:
-    workflow_paths = tuple(
-        f".github/workflows/check-{index:02}.yml" for index in range(12)
+def test_inspection_reserves_slots_and_caps_blob_requests_at_ten_files() -> None:
+    paths = (
+        ".github/security.md",
+        "SECURITY.md",
+        ".github/dependabot.yml",
+        "renovate.json",
+        "pyproject.toml",
+        "pytest.ini",
+        "tox.ini",
+        ".coveragerc",
+        "codecov.yml",
+        ".github/workflows/check-00.yml",
+        ".github/workflows/check-01.yml",
+        ".github/workflows/check-02.yml",
+        "tests/test_00.py",
+        "tests/test_01.py",
+        "tests/test_02.py",
+        "tests/test_03.py",
     )
-    tree = [
-        tree_blob(path, f"workflow-{index:02}", 20)
-        for index, path in enumerate(workflow_paths)
-    ]
+    expected_paths = (
+        ".github/security.md",
+        ".github/dependabot.yml",
+        "pyproject.toml",
+        "pytest.ini",
+        ".coveragerc",
+        ".github/workflows/check-00.yml",
+        ".github/workflows/check-01.yml",
+        "tests/test_00.py",
+        "tests/test_01.py",
+        "tests/test_02.py",
+    )
+    tree = [tree_blob(path, f"blob-{index:02}", 20) for index, path in enumerate(paths)]
     session = FakeSession(
         [
             FakeResponse(200, repository_metadata()),
@@ -260,9 +296,33 @@ def test_inspection_caps_blob_requests_at_ten_files() -> None:
         parse_repository_reference("example/project")
     )
 
-    assert tuple(file.path for file in snapshot.inspected_files) == workflow_paths[:10]
+    assert tuple(file.path for file in snapshot.inspected_files) == expected_paths
     assert snapshot.inspection_truncated is True
     assert len(session.calls) == 13
+
+
+def test_inspection_fetches_renovate_when_dependabot_is_absent() -> None:
+    session = FakeSession(
+        [
+            FakeResponse(200, repository_metadata()),
+            FakeResponse(404, {"message": "Not Found"}),
+            FakeResponse(
+                200,
+                {
+                    "tree": [tree_blob("renovate.json", "renovate", 20)],
+                    "truncated": False,
+                },
+            ),
+            encoded_blob('{"extends": ["config:recommended"]}'),
+        ]
+    )
+
+    snapshot = GitHubClient(session=session).fetch_repository(  # type: ignore[arg-type]
+        parse_repository_reference("example/project")
+    )
+
+    assert tuple(file.path for file in snapshot.inspected_files) == ("renovate.json",)
+    assert snapshot.inspection_truncated is False
 
 
 def test_inspection_skips_oversized_missing_and_binary_evidence() -> None:

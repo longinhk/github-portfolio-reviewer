@@ -6,6 +6,7 @@ from github_portfolio_reviewer.analyzer import analyze_repository
 from github_portfolio_reviewer.models import (
     CheckId,
     CheckStatus,
+    EvidenceConfidence,
     RepositorySnapshot,
     RepositoryTextFile,
 )
@@ -155,6 +156,53 @@ def test_paths_are_case_insensitive_and_both_workflow_suffixes_work(
     assert statuses[CheckId.SECURITY_POLICY] == CheckStatus.PARTIAL
 
 
+def test_documentation_and_changelog_conventions_are_recognized(
+    make_snapshot: Callable[..., RepositorySnapshot],
+) -> None:
+    doc_directory = _statuses(
+        make_snapshot(files=("doc/guide.rst", "doc/conf.py", "CHANGES"))
+    )
+    direct_whatsnew = _statuses(make_snapshot(files=("docs/whatsnew.rst",)))
+    nested_release_notes = _statuses(
+        make_snapshot(files=("documentation/release-notes/1.2.md",))
+    )
+
+    assert doc_directory[CheckId.DOCS] == CheckStatus.PASS
+    assert doc_directory[CheckId.CHANGELOG] == CheckStatus.PASS
+    assert direct_whatsnew[CheckId.CHANGELOG] == CheckStatus.PASS
+    assert nested_release_notes[CheckId.CHANGELOG] == CheckStatus.PASS
+
+
+def test_external_documentation_link_is_partial_and_unverified(
+    make_snapshot: Callable[..., RepositorySnapshot],
+) -> None:
+    finding = next(
+        finding
+        for finding in analyze_repository(
+            make_snapshot(
+                readme=(
+                    "# Project\n\n"
+                    "Read the [documentation](https://example.readthedocs.io/) "
+                    "for the complete guide."
+                )
+            )
+        )
+        if finding.check_id == CheckId.DOCS
+    )
+
+    assert finding.status == CheckStatus.PARTIAL
+    assert finding.confidence == EvidenceConfidence.UNVERIFIED
+
+
+def test_doc_conf_is_not_counted_as_production_source(
+    make_snapshot: Callable[..., RepositorySnapshot],
+) -> None:
+    statuses = _statuses(make_snapshot(files=("doc/conf.py",)))
+
+    assert statuses[CheckId.SOURCE_LAYOUT] == CheckStatus.FAIL
+    assert statuses[CheckId.MODULARITY] == CheckStatus.FAIL
+
+
 def test_truncated_tree_turns_path_absence_into_partial_evidence(
     make_snapshot: Callable[..., RepositorySnapshot],
 ) -> None:
@@ -163,15 +211,41 @@ def test_truncated_tree_turns_path_absence_into_partial_evidence(
 
     assert by_id[CheckId.CI_WORKFLOW].status == CheckStatus.PARTIAL
     assert "truncated" in by_id[CheckId.CI_WORKFLOW].evidence
+    assert by_id[CheckId.CI_WORKFLOW].confidence == EvidenceConfidence.PROVISIONAL
+    assert by_id[CheckId.TEST_FILES].confidence == EvidenceConfidence.PROVISIONAL
     assert by_id[CheckId.NO_SENSITIVE_FILES].status == CheckStatus.PARTIAL
+    assert (
+        by_id[CheckId.NO_SENSITIVE_FILES].confidence == EvidenceConfidence.PROVISIONAL
+    )
 
 
 def test_sensitive_filename_is_warning_but_env_example_is_safe(
     make_snapshot: Callable[..., RepositorySnapshot],
 ) -> None:
-    safe = _statuses(make_snapshot(files=(".env.example",)))
+    safe_findings = analyze_repository(
+        make_snapshot(
+            files=(
+                ".env.example",
+                "tests/fixtures/test-cert.pem",
+                "public-key.pem",
+            )
+        )
+    )
+    safe = {finding.check_id: finding.status for finding in safe_findings}
+    safe_sensitive = next(
+        finding
+        for finding in safe_findings
+        if finding.check_id == CheckId.NO_SENSITIVE_FILES
+    )
     risky_findings = analyze_repository(
-        make_snapshot(files=(".env.example", ".env", "keys/private.pem"))
+        make_snapshot(
+            files=(
+                ".env.example",
+                ".env",
+                "keys/private.pem",
+                "config/server-key.pem",
+            )
+        )
     )
     risky = next(
         finding
@@ -180,8 +254,14 @@ def test_sensitive_filename_is_warning_but_env_example_is_safe(
     )
 
     assert safe[CheckId.NO_SENSITIVE_FILES] == CheckStatus.PASS
+    assert "manual review" in safe_sensitive.evidence
+    assert safe_sensitive.sources == (
+        "tests/fixtures/test-cert.pem",
+        "public-key.pem",
+    )
     assert risky.status == CheckStatus.FAIL
     assert "does not confirm" in risky.evidence
+    assert "config/server-key.pem" in risky.sources
 
 
 def test_readme_section_keywords_without_headings_receive_partial_credit(
@@ -228,11 +308,38 @@ def test_test_quality_uses_ast_without_executing_code(
 
     assert strong_finding.status == CheckStatus.PASS
     assert strong_finding.sources == files
+    assert strong_finding.confidence == EvidenceConfidence.VERIFIED
     assert _statuses(placeholders)[CheckId.TEST_QUALITY] == CheckStatus.FAIL
-    assert (
-        _statuses(make_snapshot(files=files))[CheckId.TEST_QUALITY]
-        == CheckStatus.PARTIAL
+    unverified_finding = next(
+        finding
+        for finding in analyze_repository(make_snapshot(files=files))
+        if finding.check_id == CheckId.TEST_QUALITY
     )
+    assert unverified_finding.status == CheckStatus.PARTIAL
+    assert unverified_finding.confidence == EvidenceConfidence.UNVERIFIED
+
+
+def test_partial_test_sample_has_sampled_confidence(
+    make_snapshot: Callable[..., RepositorySnapshot],
+) -> None:
+    files = ("tests/test_api.py", "tests/test_service.py")
+    finding = next(
+        finding
+        for finding in analyze_repository(
+            make_snapshot(
+                files=files,
+                inspected_files=(
+                    _inspected(
+                        files[0],
+                        "def test_success():\n    assert call_api() == 200\n",
+                    ),
+                ),
+            )
+        )
+        if finding.check_id == CheckId.TEST_QUALITY
+    )
+
+    assert finding.confidence == EvidenceConfidence.SAMPLED
 
 
 def test_pyproject_content_verifies_test_and_coverage_configuration(
@@ -356,3 +463,44 @@ def test_secret_pattern_scan_is_bounded_and_reports_only_sampled_content(
     assert (
         _statuses(make_snapshot())[CheckId.NO_DETECTED_SECRETS] == CheckStatus.PARTIAL
     )
+
+
+def test_fixture_only_secret_pattern_requires_review_without_failing(
+    make_snapshot: Callable[..., RepositorySnapshot],
+) -> None:
+    finding = next(
+        finding
+        for finding in analyze_repository(
+            make_snapshot(
+                files=("tests/fixtures/test_credentials.py",),
+                inspected_files=(
+                    _inspected(
+                        "tests/fixtures/test_credentials.py",
+                        "ACCESS_KEY = '" + "AKIA" + "ABCDEFGHIJKLMNOP'",
+                    ),
+                ),
+            )
+        )
+        if finding.check_id == CheckId.NO_DETECTED_SECRETS
+    )
+
+    assert finding.status == CheckStatus.PARTIAL
+    assert "intentionally fake" in finding.evidence
+
+
+def test_clean_secret_scan_is_sampled_not_full_repository_verification(
+    make_snapshot: Callable[..., RepositorySnapshot],
+) -> None:
+    finding = next(
+        finding
+        for finding in analyze_repository(
+            make_snapshot(
+                files=("pyproject.toml",),
+                inspected_files=(_inspected("pyproject.toml", "[project]\n"),),
+            )
+        )
+        if finding.check_id == CheckId.NO_DETECTED_SECRETS
+    )
+
+    assert finding.status == CheckStatus.PASS
+    assert finding.confidence == EvidenceConfidence.SAMPLED

@@ -25,7 +25,6 @@ OWNER_PATTERN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$")
 REPOSITORY_PATTERN = re.compile(r"^[A-Za-z0-9_.-]{1,100}$")
 MAX_INSPECTED_FILES = 10
 MAX_INSPECTED_FILE_BYTES = 100 * 1024
-MAX_INSPECTED_TEST_FILES = 3
 SNAPSHOT_CACHE_SIZE = 32
 DEFAULT_CACHE_TTL_SECONDS = 5 * 60
 RETRY_DELAY_SECONDS = 0.25
@@ -68,6 +67,16 @@ SENSITIVE_FILE_NAMES = {
     "id_rsa",
 }
 SENSITIVE_FILE_SUFFIXES = {".key", ".p12", ".pem", ".pfx"}
+
+INSPECTION_BUCKET_LIMITS = (
+    ("security_policy", 1),
+    ("dependency_updater", 1),
+    ("project_config", 1),
+    ("test_config", 1),
+    ("coverage_config", 1),
+    ("workflow", 2),
+    ("test_source", 3),
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,9 +125,11 @@ def parse_repository_reference(value: str) -> RepositoryReference:
     if not candidate:
         raise InvalidRepositoryError("Enter a GitHub repository URL or owner/name.")
 
+    github_url = False
     if candidate.startswith("git@github.com:"):
         candidate = candidate.removeprefix("git@github.com:")
     elif "://" in candidate:
+        github_url = True
         parsed = urlparse(candidate)
         if parsed.scheme not in {"http", "https"} or parsed.hostname not in {
             "github.com",
@@ -138,7 +149,9 @@ def parse_repository_reference(value: str) -> RepositoryReference:
         candidate = parsed.path.strip("/")
 
     parts = candidate.strip("/").split("/")
-    if len(parts) != 2:
+    if github_url and _is_supported_repository_subpath(parts):
+        parts = parts[:2]
+    if len(parts) != 2 or not all(parts):
         raise InvalidRepositoryError(
             "Use the repository root URL, such as https://github.com/owner/repository."
         )
@@ -148,6 +161,15 @@ def parse_repository_reference(value: str) -> RepositoryReference:
     if not OWNER_PATTERN.fullmatch(owner) or not REPOSITORY_PATTERN.fullmatch(name):
         raise InvalidRepositoryError("The repository owner or name is not valid.")
     return RepositoryReference(owner=owner, name=name)
+
+
+def _is_supported_repository_subpath(parts: list[str]) -> bool:
+    """Return whether a GitHub URL safely identifies a tree or blob below a repo."""
+    if len(parts) >= 4 and parts[2] == "tree":
+        return bool(parts[3])
+    if len(parts) >= 5 and parts[2] == "blob":
+        return bool(parts[3] and parts[4])
+    return False
 
 
 class GitHubClient:
@@ -470,58 +492,65 @@ def _tree_blob(item: Mapping[str, object]) -> _TreeBlob:
 def _inspection_candidates(
     blobs: tuple[_TreeBlob, ...],
 ) -> tuple[tuple[_TreeBlob, ...], bool]:
-    """Select allowlisted text evidence in stable priority and path order."""
-    regular: list[tuple[int, str, _TreeBlob]] = []
-    tests: list[tuple[int, str, _TreeBlob]] = []
+    """Select evidence with reserved slots so one category cannot starve another."""
+    buckets: dict[str, list[tuple[str, _TreeBlob]]] = {
+        name: [] for name, _ in INSPECTION_BUCKET_LIMITS
+    }
     for blob in blobs:
-        priority = _inspection_priority(blob.path)
-        if priority is None:
+        bucket = _inspection_bucket(blob.path)
+        if bucket is None:
             continue
-        ranked = (priority, _normalize_path(blob.path), blob)
-        if priority == 3:
-            tests.append(ranked)
-        else:
-            regular.append(ranked)
+        buckets[bucket].append((_normalize_path(blob.path), blob))
 
-    regular.sort(key=lambda candidate: (candidate[0], candidate[1]))
-    tests.sort(key=lambda candidate: candidate[1])
-    truncated = len(tests) > MAX_INSPECTED_TEST_FILES
-    ranked_candidates = regular + tests[:MAX_INSPECTED_TEST_FILES]
-    ranked_candidates.sort(key=lambda candidate: (candidate[0], candidate[1]))
-    return tuple(candidate[2] for candidate in ranked_candidates), truncated
+    selected: list[_TreeBlob] = []
+    truncated = False
+    for bucket, limit in INSPECTION_BUCKET_LIMITS:
+        candidates = sorted(buckets[bucket], key=lambda candidate: candidate[0])
+        if len(candidates) > limit:
+            truncated = True
+        selected.extend(blob for _, blob in candidates[:limit])
+
+    if len(selected) > MAX_INSPECTED_FILES:
+        raise RuntimeError("Inspection bucket limits exceed the global file limit.")
+    return tuple(selected), truncated
 
 
-def _inspection_priority(path: str) -> int | None:
-    """Return the bounded-inspection priority for one safe text path."""
+def _inspection_bucket(path: str) -> str | None:
+    """Return the reserved bounded-inspection bucket for one safe text path."""
     normalized = _normalize_path(path)
     pure_path = PurePosixPath(normalized)
     name = pure_path.name
     if _is_sensitive_filename(name):
         return None
     if normalized in {
-        ".github/dependabot.yaml",
-        ".github/dependabot.yml",
         ".github/security.md",
         "docs/security.md",
         "security.md",
     }:
-        return 0
+        return "security_policy"
+    if normalized in {
+        ".github/dependabot.yaml",
+        ".github/dependabot.yml",
+        "renovate.json",
+        "renovate.json5",
+    }:
+        return "dependency_updater"
     if normalized == "pyproject.toml":
-        return 1
+        return "project_config"
     if name in TEST_CONFIG_NAMES and (
         len(pure_path.parts) == 1 or pure_path.parts[0] in {"test", "tests"}
     ):
-        return 1
+        return "test_config"
     if name in COVERAGE_CONFIG_NAMES and len(pure_path.parts) == 1:
-        return 1
+        return "coverage_config"
     if (
         len(pure_path.parts) >= 3
         and pure_path.parts[:2] == (".github", "workflows")
         and pure_path.suffix in {".yaml", ".yml"}
     ):
-        return 2
+        return "workflow"
     if _is_test_source(pure_path):
-        return 3
+        return "test_source"
     return None
 
 

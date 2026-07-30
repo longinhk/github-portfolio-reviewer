@@ -12,6 +12,7 @@ from github_portfolio_reviewer.models import (
     AnalysisFinding,
     CheckId,
     CheckStatus,
+    EvidenceConfidence,
     RepositorySnapshot,
 )
 
@@ -43,6 +44,7 @@ RESERVED_SOURCE_DIRECTORIES = {
     "build",
     "cache",
     "dist",
+    "doc",
     "docs",
     "documentation",
     "examples",
@@ -53,6 +55,57 @@ RESERVED_SOURCE_DIRECTORIES = {
     "vendor",
 }
 SOURCE_DIRECTORIES = {"app", "lib", "pkg", "src"}
+DOCUMENTATION_DIRECTORIES = {"doc", "docs", "documentation"}
+DOCUMENTATION_SUFFIXES = {".adoc", ".ipynb", ".md", ".rst", ".txt"}
+DOCUMENTATION_TOOLING = {
+    ".readthedocs.yaml",
+    ".readthedocs.yml",
+    "doc/conf.py",
+    "docs/conf.py",
+    "documentation/conf.py",
+    "docusaurus.config.cjs",
+    "docusaurus.config.js",
+    "docusaurus.config.mjs",
+    "docusaurus.config.ts",
+    "mkdocs.yaml",
+    "mkdocs.yml",
+}
+CHANGELOG_NAMES = {
+    "changelog",
+    "changes",
+    "history",
+    "news",
+    "release-notes",
+    "release_notes",
+    "releases",
+}
+CHANGELOG_SUFFIXES = {"", ".adoc", ".md", ".rst", ".txt"}
+CHANGELOG_DIRECTORIES = {
+    "changelog",
+    "changes",
+    "news",
+    "release-notes",
+    "release_notes",
+    "releases",
+    "whatsnew",
+}
+FIXTURE_DIRECTORIES = {
+    "__fixtures__",
+    "example",
+    "examples",
+    "fixture",
+    "fixtures",
+    "sample",
+    "samples",
+    "spec",
+    "specs",
+    "test",
+    "test-data",
+    "test_data",
+    "testdata",
+    "testing",
+    "tests",
+}
 ROOT_MANIFESTS = {
     "build.gradle",
     "build.gradle.kts",
@@ -170,13 +223,7 @@ def analyze_repository(snapshot: RepositorySnapshot) -> tuple[AnalysisFinding, .
             },
             "a code of conduct",
         ),
-        _governance_file_finding(
-            snapshot,
-            paths,
-            CheckId.CHANGELOG,
-            {"changelog.md", "changelog.rst", "history.md", "releases.md"},
-            "a changelog or release history",
-        ),
+        _changelog_finding(snapshot, paths),
         _security_policy_finding(snapshot, paths, inspected),
         _dependency_updates_finding(snapshot, paths, inspected),
         _sensitive_files_finding(snapshot, paths),
@@ -520,6 +567,11 @@ def _test_files_finding(
         status,
         evidence,
         sources=tuple(test_files[:5]),
+        confidence=(
+            EvidenceConfidence.PROVISIONAL
+            if snapshot.tree_truncated and not test_files
+            else EvidenceConfidence.VERIFIED
+        ),
     )
 
 
@@ -544,6 +596,7 @@ def _test_quality_finding(
             CheckStatus.PARTIAL,
             "Test files exist, but their contents were not sampled; test quality is unverified.",
             sources=tuple(test_paths[:5]),
+            confidence=EvidenceConfidence.UNVERIFIED,
         )
 
     test_cases = 0
@@ -576,6 +629,11 @@ def _test_quality_finding(
         status,
         evidence,
         sources=tuple(path for path, _ in sampled),
+        confidence=(
+            EvidenceConfidence.SAMPLED
+            if incomplete or parse_errors
+            else EvidenceConfidence.VERIFIED
+        ),
     )
 
 
@@ -674,6 +732,11 @@ def _test_configuration_finding(
             CheckStatus.PARTIAL,
             "Possible test-configuration files exist, but bounded content inspection could not verify their settings.",
             sources=tuple(candidates[:5]),
+            confidence=(
+                EvidenceConfidence.UNVERIFIED
+                if not sampled
+                else EvidenceConfidence.SAMPLED
+            ),
         )
     if sampled:
         return _finding(
@@ -688,6 +751,7 @@ def _test_configuration_finding(
             CheckStatus.PARTIAL,
             "package.json may define a test command, but its content was not inspected.",
             sources=("package.json",),
+            confidence=EvidenceConfidence.UNVERIFIED,
         )
     return _missing_path_finding(
         snapshot, CheckId.TEST_CONFIGURATION, "No explicit test configuration found."
@@ -761,6 +825,11 @@ def _coverage_finding(
             CheckStatus.PARTIAL,
             "Potential coverage configuration exists, but bounded content inspection could not verify it.",
             sources=tuple(candidates[:5]),
+            confidence=(
+                EvidenceConfidence.UNVERIFIED
+                if not sampled
+                else EvidenceConfidence.SAMPLED
+            ),
         )
     if sampled:
         return _finding(
@@ -852,6 +921,7 @@ def _actions_pinned_finding(
             CheckStatus.PARTIAL,
             "GitHub Actions workflows exist, but their contents were not sampled; action pinning is unverified.",
             sources=tuple(workflows[:5]),
+            confidence=EvidenceConfidence.UNVERIFIED,
         )
 
     references: list[tuple[str, str]] = []
@@ -885,6 +955,9 @@ def _actions_pinned_finding(
         status,
         f"Inspected {len(sampled)} workflow(s); all {len(references)} external action reference(s) use full commit SHAs.{suffix}",
         sources=tuple(path for path, _ in sampled),
+        confidence=(
+            EvidenceConfidence.SAMPLED if incomplete else EvidenceConfidence.VERIFIED
+        ),
     )
 
 
@@ -917,6 +990,7 @@ def _workflow_permissions_finding(
             CheckStatus.PARTIAL,
             "GitHub Actions workflows exist, but their contents were not sampled; permissions are unverified.",
             sources=tuple(workflows[:5]),
+            confidence=EvidenceConfidence.UNVERIFIED,
         )
 
     assessments = [
@@ -948,6 +1022,16 @@ def _workflow_permissions_finding(
         status,
         evidence,
         sources=tuple(path for path, _ in sampled),
+        confidence=(
+            EvidenceConfidence.VERIFIED
+            if any(
+                assessment in {CheckStatus.FAIL, CheckStatus.PARTIAL}
+                for _, assessment in assessments
+            )
+            else EvidenceConfidence.SAMPLED
+            if len(sampled) < len(workflows)
+            else EvidenceConfidence.VERIFIED
+        ),
     )
 
 
@@ -1001,8 +1085,8 @@ def _docs_finding(
     doc_files = [
         path
         for path in paths
-        if PurePosixPath(path).suffix in {".adoc", ".md", ".rst"}
-        and PurePosixPath(path).parts[0] in {"docs", "documentation"}
+        if PurePosixPath(path).suffix in DOCUMENTATION_SUFFIXES
+        and PurePosixPath(path).parts[0] in DOCUMENTATION_DIRECTORIES
     ]
     if doc_files:
         return _finding(
@@ -1011,18 +1095,22 @@ def _docs_finding(
             f"Found {len(doc_files)} file(s) in a documentation directory.",
             sources=tuple(doc_files[:5]),
         )
-    if any(
-        path in {"mkdocs.yml", "mkdocs.yaml", "docusaurus.config.js"} for path in paths
-    ):
+    tooling = [path for path in paths if path in DOCUMENTATION_TOOLING]
+    if tooling:
         return _finding(
             CheckId.DOCS,
             CheckStatus.PARTIAL,
             "Found documentation tooling but no documentation files in the returned tree.",
-            sources=tuple(
-                path
-                for path in paths
-                if path in {"mkdocs.yml", "mkdocs.yaml", "docusaurus.config.js"}
-            ),
+            sources=tuple(tooling[:5]),
+        )
+    external_links = _external_documentation_links(readme)
+    if external_links:
+        return _finding(
+            CheckId.DOCS,
+            CheckStatus.PARTIAL,
+            "README links to external documentation, but that content was not inspected.",
+            sources=("README.md",),
+            confidence=EvidenceConfidence.UNVERIFIED,
         )
     if re.search(r"(?im)^\s{0,3}#{1,6}\s+documentation\b", readme):
         return _finding(
@@ -1033,6 +1121,67 @@ def _docs_finding(
         )
     return _missing_path_finding(
         snapshot, CheckId.DOCS, "No extended documentation detected outside the README."
+    )
+
+
+def _external_documentation_links(readme: str) -> tuple[str, ...]:
+    """Return explicit external documentation targets linked from the README."""
+    markdown_links = re.findall(
+        r"(?<!!)\[([^\]]+)\]\((https?://[^)\s]+)(?:\s+[^)]*)?\)",
+        readme,
+        re.I,
+    )
+    html_links = re.findall(
+        r"<a\b[^>]*\bhref=[\"'](https?://[^\"']+)[\"'][^>]*>(.*?)</a>",
+        readme,
+        re.I | re.S,
+    )
+    candidates = [(label, target) for label, target in markdown_links] + [
+        (re.sub(r"<[^>]+>", " ", label), target) for target, label in html_links
+    ]
+    label_terms = ("api reference", "documentation", "docs", "guide", "manual")
+    return tuple(
+        target
+        for label, target in candidates
+        if any(term in label.casefold() for term in label_terms)
+        or re.search(
+            r"(?i)://docs\.|readthedocs\.(?:io|org)(?:/|$)|/docs(?:/|$)",
+            target,
+        )
+    )
+
+
+def _changelog_finding(
+    snapshot: RepositorySnapshot, paths: tuple[str, ...]
+) -> AnalysisFinding:
+    """Recognize common root and documentation-directory release histories."""
+    matches: list[str] = []
+    for path in paths:
+        pure_path = PurePosixPath(path)
+        if len(pure_path.parts) == 1:
+            stem = pure_path.stem if pure_path.suffix else pure_path.name
+            if stem in CHANGELOG_NAMES and pure_path.suffix in CHANGELOG_SUFFIXES:
+                matches.append(path)
+                continue
+        if (
+            pure_path.parts[0] in DOCUMENTATION_DIRECTORIES
+            and (
+                set(pure_path.parts[1:-1]) & CHANGELOG_DIRECTORIES
+                or pure_path.stem in CHANGELOG_DIRECTORIES
+            )
+            and pure_path.suffix in DOCUMENTATION_SUFFIXES
+        ):
+            matches.append(path)
+
+    if matches:
+        return _finding(
+            CheckId.CHANGELOG,
+            CheckStatus.PASS,
+            f"Found release history at {matches[0]}.",
+            sources=tuple(matches[:5]),
+        )
+    return _missing_path_finding(
+        snapshot, CheckId.CHANGELOG, "Could not find a changelog or release history."
     )
 
 
@@ -1069,6 +1218,7 @@ def _security_policy_finding(
                 CheckStatus.PARTIAL,
                 f"Found {path}, but its reporting guidance was not sampled.",
                 sources=(path,),
+                confidence=EvidenceConfidence.UNVERIFIED,
             )
         normalized = content.strip()
         relevant = bool(
@@ -1121,6 +1271,7 @@ def _dependency_updates_finding(
                 CheckStatus.PARTIAL,
                 f"Found {path}, but its update settings were not sampled.",
                 sources=(path,),
+                confidence=EvidenceConfidence.UNVERIFIED,
             )
         status = _dependency_update_status(path, content)
         if status == CheckStatus.PASS:
@@ -1199,6 +1350,17 @@ def _sensitive_files_finding(
             CheckId.NO_SENSITIVE_FILES,
             CheckStatus.PARTIAL,
             "No risky filenames appeared in the truncated tree; evidence is incomplete.",
+            confidence=EvidenceConfidence.PROVISIONAL,
+        )
+    advisory = [path for path in paths if _is_advisory_sensitive_filename(path)]
+    if advisory:
+        return _finding(
+            CheckId.NO_SENSITIVE_FILES,
+            CheckStatus.PASS,
+            "No likely production secret-bearing filenames detected. "
+            f"Found {len(advisory)} certificate or test-fixture filename(s) that "
+            "still merit manual review.",
+            sources=tuple(advisory[:5]),
         )
     return _finding(
         CheckId.NO_SENSITIVE_FILES,
@@ -1214,13 +1376,16 @@ def _detected_secrets_finding(snapshot: RepositorySnapshot) -> AnalysisFinding:
             CheckId.NO_DETECTED_SECRETS,
             CheckStatus.PARTIAL,
             "No bounded text-file sample was available for credential-pattern inspection.",
+            confidence=EvidenceConfidence.UNVERIFIED,
         )
 
     matches: list[tuple[str, str]] = []
+    fixture_matches: list[tuple[str, str]] = []
     for file in sampled:
         for label, pattern in SECRET_PATTERNS:
             if pattern.search(file.content):
-                matches.append((file.path, label))
+                target = fixture_matches if _is_fixture_path(file.path) else matches
+                target.append((file.path, label))
     if matches:
         labels = ", ".join(f"{label} pattern in {path}" for path, label in matches[:3])
         return _finding(
@@ -1229,11 +1394,23 @@ def _detected_secrets_finding(snapshot: RepositorySnapshot) -> AnalysisFinding:
             f"Detected {len(matches)} possible high-confidence credential pattern(s): {labels}. Manual verification is required.",
             sources=tuple(dict.fromkeys(path for path, _ in matches)),
         )
+    if fixture_matches:
+        labels = ", ".join(
+            f"{label} pattern in {path}" for path, label in fixture_matches[:3]
+        )
+        return _finding(
+            CheckId.NO_DETECTED_SECRETS,
+            CheckStatus.PARTIAL,
+            f"Credential-like patterns appeared only in test or example fixtures: "
+            f"{labels}. Confirm that they are intentionally fake.",
+            sources=tuple(dict.fromkeys(path for path, _ in fixture_matches)),
+        )
     return _finding(
         CheckId.NO_DETECTED_SECRETS,
         CheckStatus.PASS,
         f"No high-confidence credential pattern appeared in {len(sampled)} inspected text file(s). This is not a full secret scan.",
         sources=tuple(file.path for file in sampled[:5]),
+        confidence=EvidenceConfidence.SAMPLED,
     )
 
 
@@ -1246,12 +1423,32 @@ def _is_risky_filename(path: str) -> bool:
         and not name.endswith(safe_env_suffixes)
     ):
         return True
-    if PurePosixPath(path).suffix in {".key", ".p12", ".pem", ".pfx"}:
+    if name in {"credentials.json", "id_dsa", "id_rsa"} or re.fullmatch(
+        r"service-account.*\.json", name
+    ):
         return True
+    if _is_fixture_path(path):
+        return False
+    suffix = PurePosixPath(path).suffix
+    if suffix in {".key", ".p12", ".pfx"}:
+        return True
+    if suffix == ".pem" and re.search(r"(?:^|[-_.])public[-_.]?key(?:[-_.]|$)", name):
+        return False
     return bool(
-        name in {"credentials.json", "id_dsa", "id_rsa"}
-        or re.fullmatch(r"service-account.*\.json", name)
+        suffix == ".pem"
+        and re.search(r"(?:^|[-_.])(?:credential|key|private|secret)(?:[-_.]|$)", name)
     )
+
+
+def _is_advisory_sensitive_filename(path: str) -> bool:
+    """Return whether a certificate/key-like path deserves review, not deduction."""
+    suffix = PurePosixPath(path).suffix
+    return suffix in {".key", ".p12", ".pem", ".pfx"} and not _is_risky_filename(path)
+
+
+def _is_fixture_path(path: str) -> bool:
+    """Return whether a path is clearly scoped to tests, examples, or fixtures."""
+    return bool(set(PurePosixPath(path).parts[:-1]) & FIXTURE_DIRECTORIES)
 
 
 def _lock_file_finding(
@@ -1295,6 +1492,7 @@ def _missing_path_finding(
             check_id,
             CheckStatus.PARTIAL,
             f"{evidence} The Git tree was truncated, so absence is uncertain.",
+            confidence=EvidenceConfidence.PROVISIONAL,
         )
     return _finding(check_id, CheckStatus.FAIL, evidence)
 
@@ -1309,10 +1507,12 @@ def _finding(
     evidence: str,
     *,
     sources: tuple[str, ...] = (),
+    confidence: EvidenceConfidence = EvidenceConfidence.VERIFIED,
 ) -> AnalysisFinding:
     return AnalysisFinding(
         check_id=check_id,
         status=status,
         evidence=evidence,
         sources=sources,
+        confidence=confidence,
     )
