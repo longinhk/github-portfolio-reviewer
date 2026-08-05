@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 
+from github_portfolio_reviewer.applicability import assess_rubric_fit
 from github_portfolio_reviewer.models import (
     AnalysisFinding,
     Category,
@@ -13,7 +14,7 @@ from github_portfolio_reviewer.models import (
     ScoredCheck,
 )
 
-RULESET_VERSION = "1.2.0"
+RULESET_VERSION = "1.3.0"
 
 
 @dataclass(frozen=True, slots=True)
@@ -270,6 +271,7 @@ def score_repository(
         checks=checks,
         review_mode=review_mode,
         ruleset_version=RULESET_VERSION,
+        rubric_assessment=assess_rubric_fit(snapshot),
     )
 
 

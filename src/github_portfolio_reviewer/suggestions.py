@@ -6,8 +6,10 @@ from github_portfolio_reviewer.models import (
     EvidenceConfidence,
     ReviewMode,
     ReviewReport,
+    RubricFit,
     ScoredCheck,
     Suggestion,
+    SuggestionKind,
 )
 
 HIGH_PRIORITY_CHECKS = {
@@ -95,18 +97,34 @@ MODE_FOCUS_CHECKS: dict[ReviewMode, set[CheckId]] = {
     },
 }
 
+MANUAL_REVIEW_ACTIONS: dict[CheckId, str] = {
+    CheckId.ACTIONS_PINNED: (
+        "Review the remaining workflow files for unpinned action references; do not "
+        "change the inspected workflows unless an unpinned reference is confirmed."
+    ),
+    CheckId.WORKFLOW_PERMISSIONS: (
+        "Review workflow permissions manually and confirm that every write permission "
+        "is required by the job that uses it."
+    ),
+    CheckId.NO_DETECTED_SECRETS: (
+        "Run a complete secret and Git-history scan, then investigate only confirmed "
+        "findings before changing repository files."
+    ),
+    CheckId.NO_SENSITIVE_FILES: (
+        "Review the flagged or unavailable paths manually before treating them as "
+        "real secret-bearing files."
+    ),
+}
+
 
 def generate_suggestions(
     report: ReviewReport, *, limit: int | None = 8
 ) -> tuple[Suggestion, ...]:
     """Return evidence-backed actions ordered by risk and potential score gain."""
-    incomplete = [
-        check
-        for check in report.checks
-        if check.status != CheckStatus.PASS
-        and check.confidence
-        not in {EvidenceConfidence.UNVERIFIED, EvidenceConfidence.PROVISIONAL}
-    ]
+    if report.rubric_assessment.fit == RubricFit.LOW:
+        return ()
+
+    incomplete = [check for check in report.checks if check.status != CheckStatus.PASS]
     suppressed = _suppressed_check_ids(incomplete)
     suggestions = [
         _to_suggestion(check)
@@ -135,13 +153,39 @@ def _suppressed_check_ids(checks: list[ScoredCheck]) -> set[CheckId]:
 
 def _to_suggestion(check: ScoredCheck) -> Suggestion:
     priority = _priority_for(check)
+    manual_review = _requires_manual_review(check)
     return Suggestion(
         priority=priority,
         category=check.category,
         title=check.title,
-        action=check.recommendation,
-        potential_points=check.max_points - check.points,
+        action=(
+            _manual_review_action(check) if manual_review else check.recommendation
+        ),
+        potential_points=0 if manual_review else check.max_points - check.points,
         check_id=check.check_id,
+        kind=(
+            SuggestionKind.MANUAL_REVIEW
+            if manual_review
+            else SuggestionKind.REPOSITORY_CHANGE
+        ),
+    )
+
+
+def _requires_manual_review(check: ScoredCheck) -> bool:
+    """Return whether incomplete evidence should prompt verification, not a change."""
+    if check.confidence != EvidenceConfidence.VERIFIED:
+        return True
+    return (
+        check.status == CheckStatus.PARTIAL and check.check_id in MANUAL_REVIEW_ACTIONS
+    )
+
+
+def _manual_review_action(check: ScoredCheck) -> str:
+    """Return a check-specific verification step without inventing a defect."""
+    return MANUAL_REVIEW_ACTIONS.get(
+        check.check_id,
+        f"Review the available evidence for {check.target} manually before changing "
+        "the repository; the automated review could not confirm the full result.",
     )
 
 
@@ -160,12 +204,13 @@ def _priority_for(check: ScoredCheck) -> str:
 
 def _suggestion_sort_key(
     suggestion: Suggestion, *, review_mode: ReviewMode
-) -> tuple[int, int, float, str]:
+) -> tuple[int, int, int, float, str]:
     priority_order = {"High": 0, "Medium": 1, "Low": 2}
     focused = suggestion.check_id in MODE_FOCUS_CHECKS[review_mode]
     return (
         priority_order[suggestion.priority],
         0 if focused else 1,
+        0 if suggestion.kind == SuggestionKind.REPOSITORY_CHANGE else 1,
         -suggestion.potential_points,
         suggestion.title,
     )

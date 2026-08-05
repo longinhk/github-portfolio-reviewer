@@ -8,7 +8,7 @@ from github_portfolio_reviewer.models import ReviewReport, Suggestion
 from github_portfolio_reviewer.scoring import score_band
 from github_portfolio_reviewer.suggestions import generate_suggestions
 
-EXPORT_SCHEMA_VERSION = "1.1"
+EXPORT_SCHEMA_VERSION = "1.3"
 
 
 def report_to_dict(report: ReviewReport) -> dict[str, Any]:
@@ -19,6 +19,12 @@ def report_to_dict(report: ReviewReport) -> dict[str, Any]:
     """
     repository = report.repository
     suggestions = generate_suggestions(report, limit=None)
+    suggestions_by_check = {
+        suggestion.check_id: suggestion
+        for suggestion in suggestions
+        if suggestion.check_id is not None
+    }
+    presentation_score = report.presentation_score
     return {
         "schema_version": EXPORT_SCHEMA_VERSION,
         "ruleset_version": report.ruleset_version,
@@ -27,9 +33,22 @@ def report_to_dict(report: ReviewReport) -> dict[str, Any]:
             "public_repository_only": True,
             "default_branch_only": True,
             "bounded_inspection": True,
+            "kind": (
+                "subdirectory"
+                if repository.scope_path is not None
+                else "whole_repository"
+            ),
+            "path": repository.scope_path,
             "code_executed": False,
             "ai_api_used": False,
             "required_paid_services": False,
+        },
+        "rubric_assessment": {
+            "repository_type": report.rubric_assessment.repository_kind.value,
+            "fit": report.rubric_assessment.fit.value,
+            "score_applicable": presentation_score is not None,
+            "explanation": report.rubric_assessment.explanation,
+            "signals": list(report.rubric_assessment.signals),
         },
         "repository": {
             "full_name": repository.reference.full_name,
@@ -51,15 +70,20 @@ def report_to_dict(report: ReviewReport) -> dict[str, Any]:
         },
         "score": {
             "kind": "portfolio_presentation",
-            "points": report.score,
-            "max_points": 100,
-            "band": score_band(report.score),
+            "points": presentation_score,
+            "max_points": 100 if presentation_score is not None else None,
+            "band": (
+                score_band(presentation_score)
+                if presentation_score is not None
+                else "Not scored"
+            ),
         },
         "categories": [
             {
                 "category": category_score.category.value,
                 "points": category_score.points,
                 "max_points": category_score.max_points,
+                "score_applicable": presentation_score is not None,
             }
             for category_score in report.category_scores
         ],
@@ -75,7 +99,16 @@ def report_to_dict(report: ReviewReport) -> dict[str, Any]:
                 "evidence": check.evidence,
                 "sources": list(check.sources),
                 "target": check.target,
-                "recommendation": check.recommendation,
+                "recommendation": (
+                    suggestions_by_check[check.check_id].action
+                    if check.check_id in suggestions_by_check
+                    else None
+                ),
+                "recommendation_kind": (
+                    suggestions_by_check[check.check_id].kind.value
+                    if check.check_id in suggestions_by_check
+                    else None
+                ),
             }
             for check in report.checks
         ],
@@ -98,6 +131,7 @@ def render_markdown_report(report: ReviewReport) -> str:
     """Render a report as a portable Markdown document."""
     data = report_to_dict(report)
     repository = data["repository"]
+    rubric = data["rubric_assessment"]
     score = data["score"]
     lines = [
         f"# Portfolio presentation review: {repository['full_name']}",
@@ -108,9 +142,27 @@ def render_markdown_report(report: ReviewReport) -> str:
             f"**{data['review_mode']}** focus."
         ),
         "",
+        "## Rubric applicability",
+        "",
+        "| Fact | Value |",
+        "| --- | --- |",
+        _table_row("Repository type", rubric["repository_type"]),
+        _table_row("Software-project rubric fit", rubric["fit"]),
+        _table_row("Numeric score applicable", _yes_no(rubric["score_applicable"])),
+        _table_row("Reason", rubric["explanation"]),
+        _table_row(
+            "Review scope",
+            data["review_scope"]["path"] or "Whole repository",
+        ),
+        "",
         "## Portfolio presentation score",
         "",
-        f"**{_format_points(score['points'])}/{score['max_points']} — {score['band']}**",
+        (
+            f"**{_format_points(score['points'])}/{score['max_points']} — "
+            f"{score['band']}**"
+            if rubric["score_applicable"]
+            else "**Not scored — the software-project rubric does not fit this repository.**"
+        ),
         "",
         "## Repository facts",
         "",
@@ -129,18 +181,33 @@ def render_markdown_report(report: ReviewReport) -> str:
         _table_row("Archived", _yes_no(repository["archived"])),
         _table_row("Fork", _yes_no(repository["fork"])),
         "",
-        "## Category breakdown",
-        "",
-        "| Category | Points |",
-        "| --- | ---: |",
     ]
-    lines.extend(
-        _table_row(
-            category["category"],
-            f"{_format_points(category['points'])}/{category['max_points']}",
+    if rubric["score_applicable"]:
+        lines.extend(
+            [
+                "",
+                "## Category breakdown",
+                "",
+                "| Category | Points |",
+                "| --- | ---: |",
+            ]
         )
-        for category in data["categories"]
-    )
+        lines.extend(
+            _table_row(
+                category["category"],
+                f"{_format_points(category['points'])}/{category['max_points']}",
+            )
+            for category in data["categories"]
+        )
+    else:
+        lines.extend(
+            [
+                "",
+                "## Category breakdown",
+                "",
+                "Category scores are hidden because rubric applicability is low.",
+            ]
+        )
     lines.extend(
         [
             "",
@@ -148,9 +215,9 @@ def render_markdown_report(report: ReviewReport) -> str:
             "",
             (
                 "| Status | Confidence | Category | Check | Points | Evidence | "
-                "Sources | Target | Recommendation |"
+                "Sources | Target | Guidance | Recommendation |"
             ),
-            "| --- | --- | --- | --- | ---: | --- | --- | --- | --- |",
+            "| --- | --- | --- | --- | ---: | --- | --- | --- | --- | --- |",
         ]
     )
     lines.extend(
@@ -163,7 +230,8 @@ def render_markdown_report(report: ReviewReport) -> str:
             check["evidence"],
             ", ".join(check["sources"]) or "None",
             check["target"],
-            check["recommendation"],
+            check["recommendation_kind"] or "None",
+            check["recommendation"] or "No repository change recommended",
         )
         for check in data["checks"]
     )
@@ -173,19 +241,28 @@ def render_markdown_report(report: ReviewReport) -> str:
             check_reference = (
                 f" · `{suggestion['check_id']}`" if suggestion["check_id"] else ""
             )
+            guidance = (
+                "manual review"
+                if suggestion["kind"] == "Manual review"
+                else f"+{_format_points(suggestion['potential_points'])} points"
+            )
             lines.extend(
                 [
                     (
                         f"{index}. **{_markdown_text(suggestion['title'])}** "
                         f"({_markdown_text(suggestion['priority'])}, "
-                        f"+{_format_points(suggestion['potential_points'])} points"
+                        f"{guidance}"
                         f"{check_reference})"
                     ),
                     f"   {_markdown_text(suggestion['action'])}",
                 ]
             )
     else:
-        lines.append("No open recommendations in this ruleset.")
+        lines.append(
+            "No software-project recommendations are shown because rubric fit is low."
+            if not rubric["score_applicable"]
+            else "No open recommendations in this ruleset."
+        )
     lines.extend(
         [
             "",
@@ -196,7 +273,12 @@ def render_markdown_report(report: ReviewReport) -> str:
                 "does not measure developer ability, code correctness, or security."
             ),
             "",
-            "- Only a public repository's default branch is reviewed.",
+            (
+                "- Only the selected folder on a public repository's default branch "
+                "is reviewed; parent-repository metadata remains visible."
+                if data["review_scope"]["kind"] == "subdirectory"
+                else "- Only a public repository's default branch is reviewed."
+            ),
             "- Repository code, tests, and workflows are never executed.",
             (
                 "- Content inspection is bounded, so sampled, unverified, and "
@@ -239,6 +321,7 @@ def _suggestion_to_dict(report: ReviewReport, suggestion: Suggestion) -> dict[st
         "title": suggestion.title,
         "action": suggestion.action,
         "potential_points": suggestion.potential_points,
+        "kind": suggestion.kind.value,
     }
 
 

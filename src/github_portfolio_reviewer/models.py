@@ -1,6 +1,6 @@
 """Domain models shared by the reviewer modules."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
 
@@ -32,6 +32,30 @@ class EvidenceConfidence(StrEnum):
     SAMPLED = "sampled"
     UNVERIFIED = "unverified"
     PROVISIONAL = "provisional"
+
+
+class RepositoryKind(StrEnum):
+    """Repository shapes relevant to the software-project rubric."""
+
+    SOFTWARE = "Software project"
+    MONOREPO = "Monorepo"
+    CONTENT = "Educational or content repository"
+    UNKNOWN = "Unknown repository type"
+
+
+class RubricFit(StrEnum):
+    """How appropriately the software-project rubric fits a repository."""
+
+    HIGH = "High"
+    MEDIUM = "Medium"
+    LOW = "Low"
+
+
+class SuggestionKind(StrEnum):
+    """Whether a next step changes the repository or verifies incomplete evidence."""
+
+    REPOSITORY_CHANGE = "Repository change"
+    MANUAL_REVIEW = "Manual review"
 
 
 class CheckId(StrEnum):
@@ -82,10 +106,11 @@ class ReviewMode(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class RepositoryReference:
-    """The owner and repository name parsed from user input."""
+    """A repository identity plus an optional tree-link location hint."""
 
     owner: str
     name: str
+    linked_tree_path: tuple[str, ...] = ()
 
     @property
     def full_name(self) -> str:
@@ -124,6 +149,7 @@ class RepositorySnapshot:
     tree_truncated: bool = False
     inspected_files: tuple[RepositoryTextFile, ...] = ()
     inspection_truncated: bool = False
+    scope_path: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -164,6 +190,25 @@ class CategoryScore:
 
 
 @dataclass(frozen=True, slots=True)
+class RubricAssessment:
+    """Deterministic assessment of whether software scoring is meaningful."""
+
+    repository_kind: RepositoryKind
+    fit: RubricFit
+    explanation: str
+    signals: tuple[str, ...] = ()
+
+
+def _default_rubric_assessment() -> RubricAssessment:
+    """Return the conservative default used by manually constructed reports."""
+    return RubricAssessment(
+        repository_kind=RepositoryKind.UNKNOWN,
+        fit=RubricFit.MEDIUM,
+        explanation="Repository type has not been classified.",
+    )
+
+
+@dataclass(frozen=True, slots=True)
 class ReviewReport:
     """The complete scored review displayed to a user."""
 
@@ -171,11 +216,21 @@ class ReviewReport:
     checks: tuple[ScoredCheck, ...]
     review_mode: ReviewMode = ReviewMode.GENERAL
     ruleset_version: str = "1.0.0"
+    rubric_assessment: RubricAssessment = field(
+        default_factory=_default_rubric_assessment
+    )
 
     @property
     def score(self) -> float:
         """Return the portfolio-presentation score out of 100."""
         return sum(check.points for check in self.checks)
+
+    @property
+    def presentation_score(self) -> float | None:
+        """Return a score only when the software-project rubric is applicable."""
+        if self.rubric_assessment.fit == RubricFit.LOW:
+            return None
+        return self.score
 
     @property
     def category_scores(self) -> tuple[CategoryScore, ...]:
@@ -203,3 +258,4 @@ class Suggestion:
     action: str
     potential_points: float
     check_id: CheckId | None = None
+    kind: SuggestionKind = SuggestionKind.REPOSITORY_CHANGE

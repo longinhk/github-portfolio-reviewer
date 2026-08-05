@@ -107,7 +107,8 @@ label,
 }
 
 [data-testid="stCaptionContainer"] {
-    font-size: 0.8rem;
+    font-size: 0.875rem;
+    line-height: 1.5;
 }
 
 .product-brand {
@@ -125,7 +126,7 @@ label,
     color: var(--blue);
     display: inline-flex;
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    font-size: 0.75rem;
+    font-size: 0.8rem;
     height: 2rem;
     justify-content: center;
     width: 2rem;
@@ -134,14 +135,14 @@ label,
 .product-brand strong {
     display: block;
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    font-size: 0.9rem;
+    font-size: 0.95rem;
     font-weight: 600;
 }
 
 .product-brand small {
     color: var(--muted);
     display: block;
-    font-size: 0.72rem;
+    font-size: 0.8rem;
     margin-top: 0.08rem;
 }
 
@@ -157,7 +158,7 @@ label,
 .target-file span {
     color: var(--muted);
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    font-size: 0.7rem;
+    font-size: 0.75rem;
     font-weight: 600;
     letter-spacing: 0.08em;
 }
@@ -167,7 +168,7 @@ label,
     color: var(--muted);
     display: flex;
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    font-size: 0.7rem;
+    font-size: 0.75rem;
     gap: 0.45rem;
     justify-content: flex-end;
     white-space: nowrap;
@@ -196,7 +197,7 @@ label,
     border: 1px solid var(--border) !important;
     border-radius: 6px !important;
     color: var(--text) !important;
-    font-size: 0.8rem !important;
+    font-size: 0.875rem !important;
     font-weight: 500 !important;
 }
 
@@ -227,7 +228,7 @@ div[data-testid="stForm"] {
 
 .form-heading {
     color: var(--text);
-    font-size: 0.88rem;
+    font-size: 0.95rem;
     font-weight: 600;
     margin-bottom: 0.25rem;
 }
@@ -244,6 +245,7 @@ div[data-testid="stForm"] {
 [data-baseweb="input"] input {
     color: var(--text) !important;
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.875rem;
 }
 
 [data-testid="stTextInputRootElement"] input {
@@ -280,7 +282,7 @@ div[data-testid="stForm"] {
     display: flex;
     flex-wrap: wrap;
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    font-size: 0.7rem;
+    font-size: 0.8rem;
     gap: 0.55rem 1.2rem;
     margin-top: 0.25rem;
 }
@@ -312,7 +314,7 @@ div[data-testid="stForm"] {
 }
 
 .empty-copy p {
-    font-size: 0.82rem;
+    font-size: 0.875rem;
     line-height: 1.55;
     margin: 0;
     max-width: 680px;
@@ -330,7 +332,7 @@ div[data-testid="stForm"] {
     border: 1px solid var(--border);
     border-radius: 999px;
     color: var(--muted);
-    font-size: 0.72rem;
+    font-size: 0.8rem;
     padding: 0.2rem 0.55rem;
 }
 
@@ -350,19 +352,19 @@ div[data-testid="stForm"] {
 .workflow-list span {
     color: var(--blue);
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    font-size: 0.72rem;
+    font-size: 0.8rem;
     grid-row: 1 / 3;
     padding-top: 0.12rem;
 }
 
 .workflow-list strong {
     color: var(--text);
-    font-size: 0.8rem;
+    font-size: 0.875rem;
 }
 
 .workflow-list small {
     color: var(--muted);
-    font-size: 0.72rem;
+    font-size: 0.8rem;
 }
 
 .scope-disclosure {
@@ -385,7 +387,7 @@ div[data-testid="stForm"] {
 .scope-disclosure span {
     color: var(--muted);
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    font-size: 0.65rem;
+    font-size: 0.75rem;
     font-weight: 600;
     letter-spacing: 0.06em;
 }
@@ -399,7 +401,7 @@ div[data-testid="stForm"] {
 
 .scope-disclosure small {
     color: var(--muted);
-    font-size: 0.7rem;
+    font-size: 0.8rem;
     line-height: 1.4;
 }
 
@@ -408,6 +410,12 @@ div[data-testid="stForm"] {
     background: var(--surface) !important;
     border-color: var(--border) !important;
     color: var(--text) !important;
+}
+
+[data-testid="stAlertContainer"] p {
+    color: var(--text);
+    font-size: 0.875rem;
+    line-height: 1.5;
 }
 
 .report-divider {
@@ -444,7 +452,7 @@ div[data-testid="stForm"] {
     border-radius: 999px;
     color: var(--blue);
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    font-size: 0.65rem;
+    font-size: 0.75rem;
     font-weight: 600;
     padding: 0.12rem 0.42rem;
 }
@@ -454,10 +462,104 @@ div[data-testid="stForm"] {
     color: var(--muted);
 }
 
+.repo-label-warning {
+    background: color-mix(in srgb, var(--amber) 9%, transparent);
+    border-color: color-mix(in srgb, var(--amber) 45%, transparent);
+    color: var(--amber);
+}
+
+.repo-label-scope {
+    background: color-mix(in srgb, var(--blue) 9%, transparent);
+}
+
 .repo-description {
     color: var(--muted);
-    font-size: 0.88rem;
+    font-size: 0.875rem;
+    line-height: 1.5;
     margin: 0.65rem 0 1.1rem;
+}
+
+.rubric-evidence {
+    display: grid;
+    gap: 0.7rem;
+    padding: 0.2rem 0.1rem 0.5rem;
+}
+
+.rubric-evidence-summary {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.65rem 1rem;
+    justify-content: space-between;
+}
+
+.rubric-evidence-summary > div {
+    display: grid;
+    gap: 0.15rem;
+}
+
+.rubric-evidence-label,
+.rubric-evidence-heading {
+    color: var(--muted);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+}
+
+.rubric-evidence-summary strong {
+    color: var(--text);
+    font-size: 0.95rem;
+    font-weight: 600;
+}
+
+.rubric-fit-badge {
+    border: 1px solid;
+    border-radius: 999px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.75rem;
+    font-weight: 700;
+    padding: 0.15rem 0.45rem;
+}
+
+.rubric-fit-high {
+    background: color-mix(in srgb, var(--green) 9%, transparent);
+    border-color: color-mix(in srgb, var(--green) 40%, transparent);
+    color: var(--green);
+}
+
+.rubric-fit-medium,
+.rubric-fit-low {
+    background: color-mix(in srgb, var(--amber) 9%, transparent);
+    border-color: color-mix(in srgb, var(--amber) 40%, transparent);
+    color: var(--amber);
+}
+
+.rubric-evidence-explanation,
+.rubric-method-note {
+    color: var(--muted);
+    font-size: 0.875rem;
+    line-height: 1.5;
+    margin: 0;
+}
+
+.rubric-signal-list {
+    margin: -0.15rem 0 0;
+    padding-left: 1.35rem;
+}
+
+.rubric-signal-list li {
+    color: var(--text);
+    font-size: 0.875rem;
+    line-height: 1.5;
+    padding-left: 0.15rem;
+}
+
+.rubric-method-note {
+    border-top: 1px solid var(--border-muted);
+    color: var(--subtle);
+    font-size: 0.8rem;
+    padding-top: 0.65rem;
 }
 
 .summary-grid {
@@ -500,14 +602,21 @@ div[data-testid="stForm"] {
     font-weight: 400;
 }
 
+.score-value-unscored {
+    color: var(--amber);
+    font-size: 1.45rem;
+    letter-spacing: 0.02em;
+    margin-bottom: 0.25rem;
+}
+
 .score-band {
     color: var(--muted);
-    font-size: 0.75rem;
+    font-size: 0.8rem;
 }
 
 .score-context {
     color: var(--subtle);
-    font-size: 0.67rem;
+    font-size: 0.8rem;
     margin-top: 0.2rem;
 }
 
@@ -534,7 +643,7 @@ div[data-testid="stForm"] {
 .signal-card > span {
     color: var(--muted);
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    font-size: 0.67rem;
+    font-size: 0.75rem;
     font-weight: 600;
     letter-spacing: 0.06em;
 }
@@ -548,7 +657,7 @@ div[data-testid="stForm"] {
 
 .signal-card small {
     color: var(--muted);
-    font-size: 0.68rem;
+    font-size: 0.75rem;
 }
 
 .signal-pass strong {
@@ -587,7 +696,7 @@ div[data-testid="stForm"] {
 .repo-fact dd {
     color: var(--text);
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    font-size: 0.78rem;
+    font-size: 0.875rem;
     font-weight: 500;
     margin: 0;
     overflow-wrap: anywhere;
@@ -602,7 +711,7 @@ div[data-testid="stForm"] {
 .stTabs [data-baseweb="tab"] {
     background: transparent !important;
     color: var(--muted) !important;
-    font-size: 0.8rem;
+    font-size: 0.875rem;
     padding: 0.65rem 0.1rem;
 }
 
@@ -616,7 +725,7 @@ div[data-testid="stForm"] {
 
 .projection-line {
     color: var(--muted);
-    font-size: 0.75rem;
+    font-size: 0.8rem;
     margin: -0.25rem 0 0.65rem;
 }
 
@@ -647,7 +756,7 @@ div[data-testid="stForm"] {
 
 .category-name {
     color: var(--text);
-    font-size: 0.78rem;
+    font-size: 0.875rem;
 }
 
 .category-track {
@@ -669,14 +778,14 @@ div[data-testid="stForm"] {
 .recommendation-index {
     color: var(--muted);
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    font-size: 0.72rem;
+    font-size: 0.8rem;
     text-align: right;
 }
 
 .method-note,
 .filter-result {
     color: var(--muted);
-    font-size: 0.72rem;
+    font-size: 0.8rem;
     margin-top: 0.7rem;
 }
 
@@ -693,14 +802,14 @@ div[data-testid="stForm"] {
 
 .check-group-heading span {
     color: var(--text);
-    font-size: 0.78rem;
+    font-size: 0.875rem;
     font-weight: 600;
 }
 
 .check-group-heading small {
     color: var(--muted);
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    font-size: 0.7rem;
+    font-size: 0.75rem;
 }
 
 .check-row {
@@ -725,18 +834,40 @@ div[data-testid="stForm"] {
     border: 1px solid;
     border-radius: 999px;
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    font-size: 0.62rem;
+    font-size: 0.72rem;
     font-weight: 700;
     letter-spacing: 0.04em;
     padding: 0.1rem 0.35rem;
     text-align: center;
 }
 
+.suggestion-kind {
+    border: 1px solid;
+    border-radius: 999px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    padding: 0.1rem 0.35rem;
+}
+
+.suggestion-kind-repository-change {
+    background: color-mix(in srgb, var(--green) 8%, transparent);
+    border-color: color-mix(in srgb, var(--green) 35%, transparent);
+    color: var(--green);
+}
+
+.suggestion-kind-manual-review {
+    background: color-mix(in srgb, var(--blue) 8%, transparent);
+    border-color: color-mix(in srgb, var(--blue) 35%, transparent);
+    color: var(--blue);
+}
+
 .confidence {
     border: 1px solid;
     border-radius: 999px;
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    font-size: 0.58rem;
+    font-size: 0.7rem;
     font-weight: 600;
     letter-spacing: 0.035em;
     padding: 0.1rem 0.3rem;
@@ -796,13 +927,13 @@ div[data-testid="stForm"] {
 
 .check-title {
     color: var(--text);
-    font-size: 0.8rem;
+    font-size: 0.875rem;
     font-weight: 500;
 }
 
 .check-evidence {
     color: var(--muted);
-    font-size: 0.75rem;
+    font-size: 0.825rem;
     line-height: 1.45;
     margin: 0.35rem 0 0 6.05rem;
 }
@@ -833,18 +964,18 @@ div[data-testid="stForm"] {
 
 .recommendation-header strong {
     color: var(--text);
-    font-size: 0.8rem;
+    font-size: 0.875rem;
     font-weight: 600;
 }
 
 .recommendation-category {
     color: var(--muted);
-    font-size: 0.7rem;
+    font-size: 0.8rem;
 }
 
 .recommendation-action {
     color: var(--muted);
-    font-size: 0.75rem;
+    font-size: 0.85rem;
     line-height: 1.45;
     margin: 0.35rem 0 0;
 }
@@ -861,7 +992,7 @@ div[data-testid="stForm"] {
     border: 1px solid var(--border-muted);
     border-radius: 4px;
     color: var(--text);
-    font-size: 0.7rem;
+    font-size: 0.8rem;
     padding: 0.1rem 0.35rem;
 }
 
@@ -876,7 +1007,7 @@ div[data-testid="stForm"] {
 
 .recommendation-details p {
     color: var(--muted);
-    font-size: 0.72rem;
+    font-size: 0.8rem;
     line-height: 1.4;
     margin: 0.2rem 0 0;
 }
@@ -897,7 +1028,7 @@ div[data-testid="stForm"] {
     border: 1px solid var(--border);
     border-radius: 6px;
     color: var(--muted);
-    font-size: 0.8rem;
+    font-size: 0.875rem;
     padding: 1rem;
 }
 

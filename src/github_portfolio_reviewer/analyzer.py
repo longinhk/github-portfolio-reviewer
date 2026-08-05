@@ -1200,7 +1200,15 @@ def _governance_file_finding(
             f"Found {path}.",
             sources=(path,),
         )
-    return _missing_path_finding(snapshot, check_id, f"Could not find {label}.")
+    if snapshot.tree_truncated:
+        return _missing_path_finding(snapshot, check_id, f"Could not detect {label}.")
+    return _finding(
+        check_id,
+        CheckStatus.PARTIAL,
+        f"No {label} was detected in this repository tree. GitHub owner-level "
+        "default community files are not inspected.",
+        confidence=EvidenceConfidence.UNVERIFIED,
+    )
 
 
 def _security_policy_finding(
@@ -1246,8 +1254,16 @@ def _security_policy_finding(
             evidence,
             sources=(path,),
         )
-    return _missing_path_finding(
-        snapshot, CheckId.SECURITY_POLICY, "No SECURITY.md policy detected."
+    if snapshot.tree_truncated:
+        return _missing_path_finding(
+            snapshot, CheckId.SECURITY_POLICY, "No SECURITY.md policy detected."
+        )
+    return _finding(
+        CheckId.SECURITY_POLICY,
+        CheckStatus.PARTIAL,
+        "No SECURITY.md policy was detected in this repository tree. GitHub "
+        "owner-level default community files are not inspected.",
+        confidence=EvidenceConfidence.UNVERIFIED,
     )
 
 

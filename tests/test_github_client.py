@@ -16,6 +16,7 @@ from github_portfolio_reviewer.github_client import (
     RepositoryNotFoundError,
     parse_repository_reference,
 )
+from github_portfolio_reviewer.models import RepositoryReference
 
 
 class FakeResponse:
@@ -134,6 +135,28 @@ def test_parse_repository_reference_accepts_supported_inputs(
     assert parse_repository_reference(value).full_name == expected
 
 
+def test_parse_tree_url_preserves_branch_and_subdirectory_segments() -> None:
+    reference = parse_repository_reference(
+        "https://github.com/example/project/tree/main/packages/api%20server"
+    )
+
+    assert reference == RepositoryReference(
+        "example",
+        "project",
+        linked_tree_path=("main", "packages", "api server"),
+    )
+
+
+def test_parse_root_and_blob_urls_do_not_create_a_directory_scope() -> None:
+    root = parse_repository_reference("https://github.com/example/project")
+    blob = parse_repository_reference(
+        "https://github.com/example/project/blob/main/packages/api/app.py"
+    )
+
+    assert root.linked_tree_path == ()
+    assert blob.linked_tree_path == ()
+
+
 @pytest.mark.parametrize(
     "value",
     [
@@ -146,6 +169,11 @@ def test_parse_repository_reference_accepts_supported_inputs(
         "https://github.com/example/project/blob/main",
         "https://github.com:8443/example/project",
         "https://github.com/example/project?tab=readme",
+        "https://github.com/example/project/tree/main/%2E%2E/secrets",
+        "https://github.com/example/project/tree/main/%2Fetc",
+        "https://github.com/example/project/tree/main/folder%5Cfile",
+        "https://github.com/example/project/tree/main/%00folder",
+        "https://github.com/example/project/tree/main/folder%ZZname",
         "-invalid/project",
     ],
 )
@@ -201,6 +229,178 @@ def test_fetch_repository_builds_snapshot_and_expected_requests() -> None:
     assert headers["Authorization"] == "Bearer test-token"
     assert headers["Accept"] == "application/vnd.github+json"
     assert headers["X-GitHub-Api-Version"] == "2026-03-10"
+
+
+def test_fetch_repository_scopes_evidence_to_linked_default_branch_folder() -> None:
+    readme = "# API package\n\nInstall and usage instructions."
+    scoped_contents = {
+        "pyproject.toml": '[project]\nname = "api"\n',
+        ".github/workflows/ci.yml": "permissions:\n  contents: read\n",
+        "tests/test_api.py": "def test_api():\n    assert True\n",
+    }
+    tree = [
+        tree_blob("pyproject.toml", "root-project", 20),
+        tree_blob("packages/another/app.py", "another-app", 20),
+        tree_blob("packages/api/README.md", "scoped-readme", len(readme)),
+        *(
+            tree_blob(
+                f"packages/api/{path}",
+                f"scoped-{index}",
+                len(content.encode()),
+            )
+            for index, (path, content) in enumerate(scoped_contents.items())
+        ),
+        tree_blob("packages/apiary/app.py", "similarly-named", 20),
+    ]
+    session = FakeSession(
+        [
+            FakeResponse(200, repository_metadata()),
+            FakeResponse(
+                200,
+                {"content": base64.b64encode(readme.encode()).decode()},
+            ),
+            FakeResponse(200, {"tree": tree, "truncated": False}),
+            *(encoded_blob(content) for content in scoped_contents.values()),
+        ]
+    )
+    reference = parse_repository_reference(
+        "https://github.com/example/project/tree/main/packages/api"
+    )
+
+    snapshot = GitHubClient(session=session).fetch_repository(  # type: ignore[arg-type]
+        reference,
+        scope_to_linked_subdirectory=True,
+    )
+
+    assert snapshot.scope_path == "packages/api"
+    assert snapshot.html_url == (
+        "https://github.com/example/project/tree/main/packages/api"
+    )
+    assert snapshot.readme == readme
+    assert snapshot.files == (
+        "README.md",
+        "pyproject.toml",
+        ".github/workflows/ci.yml",
+        "tests/test_api.py",
+    )
+    assert tuple(file.path for file in snapshot.inspected_files) == tuple(
+        scoped_contents
+    )
+    assert tuple(file.content for file in snapshot.inspected_files) == tuple(
+        scoped_contents.values()
+    )
+    assert session.calls[1]["url"].endswith(
+        "/repos/example/project/readme/packages/api"
+    )
+    assert session.calls[1]["params"] == {"ref": "main"}
+
+
+def test_scoped_review_resolves_a_default_branch_containing_slashes() -> None:
+    session = FakeSession(
+        [
+            FakeResponse(
+                200,
+                repository_metadata(default_branch="feature/docs"),
+            ),
+            FakeResponse(404, {"message": "Not Found"}),
+            FakeResponse(
+                200,
+                {
+                    "tree": [
+                        tree_blob("packages/api/app.py", "app", 20),
+                        tree_blob("packages/web/app.py", "web", 20),
+                    ],
+                    "truncated": False,
+                },
+            ),
+        ]
+    )
+    reference = parse_repository_reference(
+        "https://github.com/example/project/tree/feature/docs/packages/api"
+    )
+
+    snapshot = GitHubClient(session=session).fetch_repository(  # type: ignore[arg-type]
+        reference,
+        scope_to_linked_subdirectory=True,
+    )
+
+    assert snapshot.scope_path == "packages/api"
+    assert snapshot.files == ("app.py",)
+    assert session.calls[1]["params"] == {"ref": "feature/docs"}
+
+
+def test_scoped_review_rejects_a_non_default_branch_before_fetching_files() -> None:
+    session = FakeSession(
+        [FakeResponse(200, repository_metadata(default_branch="main"))]
+    )
+    reference = parse_repository_reference(
+        "https://github.com/example/project/tree/feature/packages/api"
+    )
+
+    with pytest.raises(InvalidRepositoryError, match="default branch"):
+        GitHubClient(session=session).fetch_repository(  # type: ignore[arg-type]
+            reference,
+            scope_to_linked_subdirectory=True,
+        )
+
+    assert len(session.calls) == 1
+
+
+def test_tree_url_keeps_whole_repository_behavior_without_scope_opt_in() -> None:
+    session = FakeSession(
+        [
+            FakeResponse(200, repository_metadata()),
+            FakeResponse(404, {"message": "Not Found"}),
+            FakeResponse(
+                200,
+                {
+                    "tree": [
+                        tree_blob("root.py", "root", 20),
+                        tree_blob("packages/api/app.py", "app", 20),
+                    ],
+                    "truncated": False,
+                },
+            ),
+        ]
+    )
+    reference = parse_repository_reference(
+        "https://github.com/example/project/tree/main/packages/api"
+    )
+
+    snapshot = GitHubClient(session=session).fetch_repository(  # type: ignore[arg-type]
+        reference
+    )
+
+    assert snapshot.scope_path is None
+    assert snapshot.html_url == "https://github.com/example/project"
+    assert snapshot.files == ("root.py", "packages/api/app.py")
+    assert session.calls[1]["url"].endswith("/repos/example/project/readme")
+    assert session.calls[1]["params"] is None
+
+
+def test_scoped_review_rejects_a_missing_default_branch_folder() -> None:
+    session = FakeSession(
+        [
+            FakeResponse(200, repository_metadata()),
+            FakeResponse(404, {"message": "Not Found"}),
+            FakeResponse(
+                200,
+                {
+                    "tree": [tree_blob("packages/web/app.py", "web", 20)],
+                    "truncated": False,
+                },
+            ),
+        ]
+    )
+    reference = parse_repository_reference(
+        "https://github.com/example/project/tree/main/packages/api"
+    )
+
+    with pytest.raises(InvalidRepositoryError, match="not found"):
+        GitHubClient(session=session).fetch_repository(  # type: ignore[arg-type]
+            reference,
+            scope_to_linked_subdirectory=True,
+        )
 
 
 def test_fetch_repository_collects_deterministic_bounded_text_evidence() -> None:

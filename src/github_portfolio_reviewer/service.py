@@ -17,6 +17,7 @@ def review_repository(
     token: str | None = None,
     client: GitHubClient | None = None,
     review_mode: ReviewMode = ReviewMode.GENERAL,
+    scope_to_linked_subdirectory: bool = False,
     progress: Callable[[str], None] | None = None,
 ) -> ReviewReport:
     """Fetch, analyze, and score one public GitHub repository.
@@ -26,15 +27,20 @@ def review_repository(
         token: Optional GitHub token used by the API client.
         client: Optional client override used by offline tests.
         review_mode: Recommendation focus that does not change the numeric score.
+        scope_to_linked_subdirectory: Analyze the folder from a default-branch
+            ``/tree/`` URL instead of the entire repository.
         progress: Optional presentation callback for pipeline status updates.
     """
     reference = parse_repository_reference(repository_input)
     github_client = client or GitHubClient(token=token)
     _notify(progress, "1/3 Fetching repository evidence from GitHub")
-    snapshot = github_client.fetch_repository(reference)
+    snapshot = github_client.fetch_repository(
+        reference,
+        scope_to_linked_subdirectory=scope_to_linked_subdirectory,
+    )
     _notify(progress, "2/3 Inspecting deterministic portfolio signals")
     findings = analyze_repository(snapshot)
-    _notify(progress, "3/3 Calculating the portfolio presentation score")
+    _notify(progress, "3/3 Checking rubric fit and calculating the report")
     return score_repository(snapshot, findings, review_mode=review_mode)
 
 

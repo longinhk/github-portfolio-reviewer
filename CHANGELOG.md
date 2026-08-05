@@ -8,6 +8,18 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Ruleset 1.3 deterministic repository-type and rubric-fit assessment. Clear
+  educational/content repositories are marked not scored, while monorepos and
+  ambiguous layouts display a whole-repository caution.
+- Separate repository-change and manual-verification guidance so incomplete
+  evidence cannot claim recoverable points or invent a defect.
+- Rubric applicability and recommendation kind in JSON and Markdown exports.
+- A documented real-repository validation matrix covering conventional
+  projects, monorepos, and content repositories.
+- Optional default-branch subdirectory reviews for GitHub `/tree/` links, with
+  scoped README, file-tree, and inspected evidence.
+- Export schema 1.3 records whether a report covers the whole repository or a
+  selected subdirectory.
 - Ruleset 1.2 evidence-confidence labels: verified, sampled, unverified, and
   provisional.
 - Fixed inspection buckets for security policy, dependency updating, project and
@@ -39,6 +51,12 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- Monorepo detection now ignores manifests inside documentation, tests,
+  examples, fixtures, and vendored support trees while retaining genuine nested
+  projects.
+- Treat absent contributing, code-of-conduct, and security-policy files as
+  unverified repository-tree evidence because owner-level defaults are outside
+  the current inspection scope.
 - Renamed the headline metric to a portfolio-presentation score so it is not
   mistaken for a code-quality, developer-ability, or hiring score.
 - Prepared package metadata for version 0.2.0. No 0.2.0 tag, GitHub release, or

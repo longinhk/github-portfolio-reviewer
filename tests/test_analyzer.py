@@ -173,6 +173,24 @@ def test_documentation_and_changelog_conventions_are_recognized(
     assert nested_release_notes[CheckId.CHANGELOG] == CheckStatus.PASS
 
 
+def test_missing_community_files_are_unverified_not_definitively_missing(
+    make_snapshot: Callable[..., RepositorySnapshot],
+) -> None:
+    findings = {
+        finding.check_id: finding for finding in analyze_repository(make_snapshot())
+    }
+
+    for check_id in (
+        CheckId.CONTRIBUTING,
+        CheckId.CODE_OF_CONDUCT,
+        CheckId.SECURITY_POLICY,
+    ):
+        finding = findings[check_id]
+        assert finding.status == CheckStatus.PARTIAL
+        assert finding.confidence == EvidenceConfidence.UNVERIFIED
+        assert "owner-level default community files" in finding.evidence
+
+
 def test_external_documentation_link_is_partial_and_unverified(
     make_snapshot: Callable[..., RepositorySnapshot],
 ) -> None:
