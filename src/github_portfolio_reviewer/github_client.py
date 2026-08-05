@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from pathlib import PurePosixPath
 from time import monotonic, sleep
 from typing import Any
-from urllib.parse import quote, urlparse
+from urllib.parse import quote, unquote, urlparse
 
 import requests
 
@@ -125,11 +125,10 @@ def parse_repository_reference(value: str) -> RepositoryReference:
     if not candidate:
         raise InvalidRepositoryError("Enter a GitHub repository URL or owner/name.")
 
-    github_url = False
+    linked_tree_path: tuple[str, ...] = ()
     if candidate.startswith("git@github.com:"):
         candidate = candidate.removeprefix("git@github.com:")
     elif "://" in candidate:
-        github_url = True
         parsed = urlparse(candidate)
         if parsed.scheme not in {"http", "https"} or parsed.hostname not in {
             "github.com",
@@ -146,11 +145,14 @@ def parse_repository_reference(value: str) -> RepositoryReference:
             raise InvalidRepositoryError(
                 "Use a plain GitHub repository URL without credentials, ports, or query text."
             )
-        candidate = parsed.path.strip("/")
+        parts = _safe_github_url_parts(parsed.path)
+        if _is_supported_repository_subpath(parts):
+            if parts[2] == "tree":
+                linked_tree_path = tuple(parts[3:])
+            parts = parts[:2]
+        candidate = "/".join(parts)
 
     parts = candidate.strip("/").split("/")
-    if github_url and _is_supported_repository_subpath(parts):
-        parts = parts[:2]
     if len(parts) != 2 or not all(parts):
         raise InvalidRepositoryError(
             "Use the repository root URL, such as https://github.com/owner/repository."
@@ -160,7 +162,31 @@ def parse_repository_reference(value: str) -> RepositoryReference:
     name = name.removesuffix(".git")
     if not OWNER_PATTERN.fullmatch(owner) or not REPOSITORY_PATTERN.fullmatch(name):
         raise InvalidRepositoryError("The repository owner or name is not valid.")
-    return RepositoryReference(owner=owner, name=name)
+    return RepositoryReference(
+        owner=owner,
+        name=name,
+        linked_tree_path=linked_tree_path,
+    )
+
+
+def _safe_github_url_parts(path: str) -> list[str]:
+    """Decode URL path segments while rejecting ambiguous traversal-like input."""
+    raw_parts = path.strip("/").split("/")
+    parts: list[str] = []
+    for raw_part in raw_parts:
+        if re.search(r"%(?![0-9A-Fa-f]{2})", raw_part):
+            raise InvalidRepositoryError("The repository URL contains an unsafe path.")
+        part = unquote(raw_part)
+        if (
+            not part
+            or part in {".", ".."}
+            or "/" in part
+            or "\\" in part
+            or any(ord(character) < 32 for character in part)
+        ):
+            raise InvalidRepositoryError("The repository URL contains an unsafe path.")
+        parts.append(part)
+    return parts
 
 
 def _is_supported_repository_subpath(parts: list[str]) -> bool:
@@ -202,9 +228,17 @@ class GitHubClient:
         if token and token.strip():
             self._headers["Authorization"] = f"Bearer {token.strip()}"
 
-    def fetch_repository(self, reference: RepositoryReference) -> RepositorySnapshot:
-        """Collect metadata, README text, and file paths for a public repository."""
-        cache_key = reference.full_name.casefold()
+    def fetch_repository(
+        self,
+        reference: RepositoryReference,
+        *,
+        scope_to_linked_subdirectory: bool = False,
+    ) -> RepositorySnapshot:
+        """Collect evidence for a repository or its linked default-branch folder."""
+        linked_tree_path = (
+            reference.linked_tree_path if scope_to_linked_subdirectory else ()
+        )
+        cache_key = _snapshot_cache_key(reference, linked_tree_path)
         cached = self._cached_snapshot(cache_key)
         if cached is not None:
             return cached
@@ -219,7 +253,12 @@ class GitHubClient:
         )
         encoded_name = quote(canonical_reference.full_name, safe="/")
         default_branch = _required_string(metadata, "default_branch")
-        readme = self._fetch_readme(encoded_name)
+        scope_path = _resolve_linked_subdirectory(linked_tree_path, default_branch)
+        readme = self._fetch_readme(
+            encoded_name,
+            branch=default_branch,
+            scope_path=scope_path,
+        )
         repository_size = metadata.get("size")
         if (
             isinstance(repository_size, int)
@@ -229,6 +268,12 @@ class GitHubClient:
             blobs, tree_truncated = (), False
         else:
             blobs, tree_truncated = self._fetch_tree(encoded_name, default_branch)
+        if scope_path is not None:
+            blobs = _scope_tree_blobs(blobs, scope_path)
+            if not blobs and not tree_truncated:
+                raise InvalidRepositoryError(
+                    "The linked subdirectory was not found on the default branch."
+                )
         files = tuple(blob.path for blob in blobs)
         inspected_files, inspection_truncated = self._fetch_inspected_files(
             encoded_name, blobs
@@ -250,10 +295,14 @@ class GitHubClient:
 
         snapshot = RepositorySnapshot(
             reference=canonical_reference,
-            html_url=_string_value(
-                metadata,
-                "html_url",
-                default=f"https://github.com/{canonical_reference.full_name}",
+            html_url=_scoped_html_url(
+                _string_value(
+                    metadata,
+                    "html_url",
+                    default=f"https://github.com/{canonical_reference.full_name}",
+                ),
+                default_branch=default_branch,
+                scope_path=scope_path,
             ),
             description=_optional_string(metadata.get("description")),
             default_branch=default_branch,
@@ -272,6 +321,7 @@ class GitHubClient:
             tree_truncated=tree_truncated,
             inspected_files=inspected_files,
             inspection_truncated=inspection_truncated,
+            scope_path=scope_path,
         )
         self._store_snapshot(cache_key, snapshot)
         return snapshot
@@ -299,8 +349,23 @@ class GitHubClient:
         while len(self._snapshot_cache) > SNAPSHOT_CACHE_SIZE:
             self._snapshot_cache.popitem(last=False)
 
-    def _fetch_readme(self, encoded_name: str) -> str | None:
-        payload = self._get_json(f"/repos/{encoded_name}/readme", allow_not_found=True)
+    def _fetch_readme(
+        self,
+        encoded_name: str,
+        *,
+        branch: str,
+        scope_path: str | None,
+    ) -> str | None:
+        endpoint = f"/repos/{encoded_name}/readme"
+        params = None
+        if scope_path is not None:
+            endpoint = f"{endpoint}/{quote(scope_path, safe='/')}"
+            params = {"ref": branch}
+        payload = self._get_json(
+            endpoint,
+            params=params,
+            allow_not_found=True,
+        )
         if payload is None:
             return None
         if not isinstance(payload, Mapping):
@@ -487,6 +552,61 @@ def _tree_blob(item: Mapping[str, object]) -> _TreeBlob:
         else None
     )
     return _TreeBlob(path=str(item["path"]), sha=sha, size=size)
+
+
+def _snapshot_cache_key(
+    reference: RepositoryReference, linked_tree_path: tuple[str, ...]
+) -> str:
+    """Return a cache key that keeps whole-repository and scoped evidence separate."""
+    key = reference.full_name.casefold()
+    if linked_tree_path:
+        return f"{key}::tree/{'/'.join(linked_tree_path)}"
+    return key
+
+
+def _resolve_linked_subdirectory(
+    linked_tree_path: tuple[str, ...], default_branch: str
+) -> str | None:
+    """Resolve tree-link segments only when they target the default branch."""
+    if not linked_tree_path:
+        return None
+    branch_parts = tuple(default_branch.split("/"))
+    if linked_tree_path[: len(branch_parts)] != branch_parts:
+        raise InvalidRepositoryError(
+            "Subdirectory review only supports links on the default branch."
+        )
+    relative_parts = linked_tree_path[len(branch_parts) :]
+    return "/".join(relative_parts) or None
+
+
+def _scope_tree_blobs(
+    blobs: tuple[_TreeBlob, ...], scope_path: str
+) -> tuple[_TreeBlob, ...]:
+    """Keep blobs below one directory and make their paths scope-relative."""
+    prefix = f"{scope_path}/"
+    return tuple(
+        _TreeBlob(
+            path=blob.path.removeprefix(prefix),
+            sha=blob.sha,
+            size=blob.size,
+        )
+        for blob in blobs
+        if blob.path.startswith(prefix) and blob.path != prefix
+    )
+
+
+def _scoped_html_url(
+    repository_url: str,
+    *,
+    default_branch: str,
+    scope_path: str | None,
+) -> str:
+    """Return the canonical repository or default-branch subdirectory URL."""
+    if scope_path is None:
+        return repository_url
+    encoded_branch = quote(default_branch, safe="/")
+    encoded_scope = quote(scope_path, safe="/")
+    return f"{repository_url.rstrip('/')}/tree/{encoded_branch}/{encoded_scope}"
 
 
 def _inspection_candidates(

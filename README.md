@@ -6,7 +6,8 @@
 A Streamlit student portfolio application that reviews how effectively a public
 GitHub repository presents an engineering project to internship recruiters and
 technical reviewers. It produces a transparent portfolio-presentation score out
-of 100, evidence for every check, and a prioritized improvement plan.
+of 100 when the software-project rubric fits, evidence for every check, and a
+prioritized improvement plan.
 
 **No AI API, model key, or paid inference service is required.** Every result
 comes from explicit Python rules applied to read-only GitHub evidence.
@@ -20,22 +21,29 @@ comes from explicit Python rules applied to read-only GitHub evidence.
 ## Features
 
 - Accepts `owner/repository`, repository-root, branch, or file GitHub URLs, and
-  SSH clone strings. Branch and file URLs are normalized to the repository root;
-  the review still analyzes the default branch.
+  SSH clone strings. A default-branch `/tree/` URL can review either its linked
+  folder or the whole repository; file URLs identify the repository root.
 - Collects repository metadata, the preferred README, the recursive file tree,
   and a bounded allowlist of small text files through the GitHub REST API.
 - Reviews metadata, README quality, structure, tests, CI/CD, documentation, and
   basic security signals.
+- Deterministically identifies conventional software projects, monorepos, clear
+  educational/content repositories, and ambiguous repository shapes. Low-fit
+  content repositories are marked **Not scored** instead of receiving a
+  misleading software-project score.
 - Verifies selected test, Python, CI, dependency-update, and security signals
   without cloning or executing repository code. Ten inspection slots are
   reserved by evidence type so one large category cannot hide another.
-- Shows points, evidence files, confidence, thresholds, and next steps behind
-  every result.
+- Shows points, evidence files, confidence, rubric fit, and next steps behind
+  every applicable result. Incomplete evidence produces manual-verification
+  guidance rather than an invented repository defect.
 - Offers General, Python, AI/ML, data-science, and backend internship review
   focuses. Focus changes recommendation order—not the comparable score.
 - Exports deterministic Markdown and JSON reports without raw source content.
 - Reuses recent public evidence for five minutes and retries only temporary
   connection or GitHub server failures once.
+- Documents a [real-repository validation matrix](docs/validation-matrix.md)
+  without treating third-party scores as code-quality rankings.
 - Includes dark and light GitHub-inspired themes, check filters, search, and a
   mobile-responsive report.
 - Handles missing repositories, invalid tokens, API limits, timeouts, empty
@@ -60,7 +68,7 @@ a reliable measure of engineering quality. CI configuration is not proof that a
 workflow passes, and suspicious filenames are not proof that they contain
 secrets.
 
-Ruleset 1.2 separates a check's result from how completely its evidence was
+Ruleset 1.3 separates a check's result from how completely its evidence was
 inspected:
 
 | Confidence | Meaning |
@@ -75,12 +83,19 @@ it does not silently change the rubric. The ruleset version is included in each
 portable report so results can be interpreted against the rules that produced
 them.
 
+Before presenting a numeric score, the reviewer checks whether the repository
+resembles a software project. Conventional software projects have high rubric
+fit. Monorepos and ambiguous layouts retain a score with a caution. Clear
+educational or reference-content repositories have low fit, so the numeric
+score, category totals, and software-project recommendations are withheld.
+Stars remain context only and never influence this decision.
+
 ## Architecture
 
 ```text
 Streamlit UI -> Review service -> GitHub client -> GitHub REST API
                      |
-                     +-> Analyzer -> Scoring -> Suggestions
+                     +-> Analyzer -> Applicability -> Scoring -> Suggestions
                               +-> Markdown / JSON reporting
                               \_______ domain models _______/
 ```
@@ -136,14 +151,16 @@ streamlit run streamlit_app.py
 
 1. Open the local Streamlit URL printed in the terminal.
 2. Enter `owner/repository` or a public repository URL.
-3. Select a **Review focus**, then select **Run review**. The focus prioritizes
-   suggestions but never changes the numerical rubric.
-4. Use **Overview** for the score and highest-impact actions, **Checks** to
+3. Select a **Review focus**. For a `/tree/` URL, keep **Linked folder if
+   present** to analyze that subproject or choose **Whole repository**.
+4. Select **Run review**. The focus prioritizes suggestions but never changes
+   the numerical rubric.
+5. Use **Overview** for the score and highest-impact actions, **Checks** to
    filter the evidence-backed results, and **Recommendations** for the full
    improvement plan.
-5. Download a deterministic Markdown or JSON report when you want to save or
+6. Download a deterministic Markdown or JSON report when you want to save or
    share the review.
-6. Open **Settings** to change appearance or provide an optional GitHub token.
+7. Open **Settings** to change appearance or provide an optional GitHub token.
 
 Try `longinhk/github-portfolio-reviewer` to review this project itself. A cold
 review normally makes three base GitHub requests plus at most ten bounded
@@ -237,8 +254,17 @@ analysis, testing, CI, and deployment preparation. It is not a production
 hiring, code-review, compliance, or security product.
 
 - Only public GitHub repositories are supported.
-- Reviews use the default branch. A branch or file URL identifies the repository
-  but does not request analysis of that specific branch or file.
+- Reviews use the default branch. A `/tree/` URL may scope file and README
+  evidence to a linked default-branch folder; repository metadata still comes
+  from the parent repository. Non-default-branch folder review is rejected
+  rather than silently analyzing a different revision. A file URL identifies
+  the repository but does not request analysis of that individual file.
+- Repository-type detection is deterministic and conservative. It can still
+  classify an unusual mixed-purpose repository incorrectly; ambiguous cases are
+  labeled medium fit instead of being guessed as content or software.
+- The current rubric intentionally scores software projects only. Educational,
+  reference, and skills collections are marked not scored rather than evaluated
+  with irrelevant testing and CI expectations.
 - Content inspection is intentionally limited to ten small text files with fixed
   slots: one security policy, one dependency updater, one `pyproject.toml`, one
   explicit test configuration, one coverage configuration, two workflows, and
@@ -256,7 +282,8 @@ hiring, code-review, compliance, or security product.
 - Heuristics favor common project conventions and can produce false positives or
   false negatives for unusual ecosystems.
 - The reviewer does not inspect every file, commit, branch, issue, pull request,
-  branch-protection rule, or organization-level community setting.
+  branch-protection rule, inherited owner-level community file, or
+  organization-level setting.
 - It cannot judge a developer's ability, originality, project usefulness, or
   suitability for employment, and it cannot guarantee uptime within free
   hosting and API limits.
@@ -279,6 +306,7 @@ are independently true.
 ## Project documentation
 
 - [Architecture and design decisions](docs/architecture.md)
+- [Real-repository validation matrix](docs/validation-matrix.md)
 - [Contribution guide](CONTRIBUTING.md)
 - [Code of conduct](CODE_OF_CONDUCT.md)
 - [Change history](CHANGELOG.md)
@@ -287,6 +315,7 @@ are independently true.
 ## Optional future work
 
 - Let users compare two snapshots of the same repository.
+- Improve branch/path disambiguation for unusual GitHub tree links.
 - Add JavaScript/TypeScript-specific content checks beside the Python checks.
 - Display live GitHub Actions status when API allowance permits.
 - Calibrate rules against a larger, versioned corpus of representative

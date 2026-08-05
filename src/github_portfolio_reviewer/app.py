@@ -24,8 +24,10 @@ from github_portfolio_reviewer.models import (
     EvidenceConfidence,
     ReviewMode,
     ReviewReport,
+    RubricFit,
     ScoredCheck,
     Suggestion,
+    SuggestionKind,
 )
 from github_portfolio_reviewer.reporting import (
     render_json_report,
@@ -38,6 +40,8 @@ from github_portfolio_reviewer.suggestions import generate_suggestions
 
 EXAMPLE_REPOSITORY = "longinhk/github-portfolio-reviewer"
 RECENT_REPOSITORY_LIMIT = 4
+LINKED_SCOPE_LABEL = "Linked folder if present"
+WHOLE_SCOPE_LABEL = "Whole repository"
 
 STATUS_LABELS = {
     CheckStatus.PASS: "PASS",
@@ -82,10 +86,17 @@ def main() -> None:
     token = _render_product_bar()
     if not has_report:
         _render_introduction()
-    repository_input, review_mode, submitted = _render_review_form(compact=has_report)
+    repository_input, review_mode, linked_scope, submitted = _render_review_form(
+        compact=has_report
+    )
     _render_repository_shortcuts(compact=has_report)
 
-    if submitted and _run_review(repository_input, token, review_mode):
+    if submitted and _run_review(
+        repository_input,
+        token,
+        review_mode,
+        scope_to_linked_subdirectory=linked_scope,
+    ):
         st.rerun()
 
     report = st.session_state.get("review_report")
@@ -168,7 +179,7 @@ def _render_introduction() -> None:
     )
 
 
-def _render_review_form(*, compact: bool) -> tuple[str, ReviewMode, bool]:
+def _render_review_form(*, compact: bool) -> tuple[str, ReviewMode, bool, bool]:
     with st.form("repository-review-form", border=True):
         heading = (
             "Review another repository" if compact else "Review a public repository"
@@ -177,8 +188,8 @@ def _render_review_form(*, compact: bool) -> tuple[str, ReviewMode, bool]:
             f'<div class="form-heading">{heading}</div>',
             unsafe_allow_html=True,
         )
-        input_column, focus_column, button_column = st.columns(
-            [4.1, 2, 1.35], vertical_alignment="bottom"
+        input_column, focus_column, scope_column, button_column = st.columns(
+            [3.6, 1.65, 1.75, 1.3], vertical_alignment="bottom"
         )
         with input_column:
             repository_input = st.text_input(
@@ -186,9 +197,9 @@ def _render_review_form(*, compact: bool) -> tuple[str, ReviewMode, bool]:
                 placeholder="owner/repository or https://github.com/owner/repository",
                 key="repository_input",
                 help=(
-                    "Enter owner/repository or a public GitHub URL. Branch (/tree/...) "
-                    "and file (/blob/...) links are accepted; reviews always use the "
-                    "repository's default branch."
+                    "Enter owner/repository or a public GitHub URL. A /tree/ URL can "
+                    "review its linked folder on the default branch. /blob/ links "
+                    "identify the repository but do not scope the review to one file."
                 ),
             )
         with focus_column:
@@ -199,6 +210,17 @@ def _render_review_form(*, compact: bool) -> tuple[str, ReviewMode, bool]:
                 help=(
                     "Changes recommendation order only. The deterministic 100-point "
                     "rubric stays comparable across every focus."
+                ),
+            )
+        with scope_column:
+            scope_label = st.selectbox(
+                "Review scope",
+                [LINKED_SCOPE_LABEL, WHOLE_SCOPE_LABEL],
+                key="review_scope",
+                help=(
+                    "For a default-branch /tree/ URL, review only the linked folder or "
+                    "choose the entire repository. Root URLs behave the same in both "
+                    "modes."
                 ),
             )
         with button_column:
@@ -213,7 +235,12 @@ def _render_review_form(*, compact: bool) -> tuple[str, ReviewMode, bool]:
             "</div>",
             unsafe_allow_html=True,
         )
-    return repository_input, ReviewMode(review_mode_label), submitted
+    return (
+        repository_input,
+        ReviewMode(review_mode_label),
+        scope_label == LINKED_SCOPE_LABEL,
+        submitted,
+    )
 
 
 def _render_repository_shortcuts(*, compact: bool) -> None:
@@ -264,6 +291,8 @@ def _run_review(
     repository_input: str,
     token: str | None,
     review_mode: ReviewMode,
+    *,
+    scope_to_linked_subdirectory: bool,
 ) -> bool:
     """Run a review and return whether a new report was stored."""
     if not repository_input.strip():
@@ -282,6 +311,7 @@ def _run_review(
             repository_input,
             client=_review_client(token),
             review_mode=review_mode,
+            scope_to_linked_subdirectory=scope_to_linked_subdirectory,
             progress=status.write,
         )
     except GitHubClientError as error:
@@ -381,6 +411,14 @@ def _render_report(report: ReviewReport) -> None:
             labels.append('<span class="repo-label repo-label-muted">FORK</span>')
         if repository.archived:
             labels.append('<span class="repo-label repo-label-muted">ARCHIVED</span>')
+        if repository.scope_path:
+            labels.append(
+                '<span class="repo-label repo-label-scope">SUBDIRECTORY</span>'
+            )
+        if report.rubric_assessment.fit == RubricFit.LOW:
+            labels.append(
+                '<span class="repo-label repo-label-warning">⚠ LOW RUBRIC FIT</span>'
+            )
         st.markdown(
             '<div class="repository-heading">'
             f'<a class="repo-path" href="{escape(repository.html_url)}" '
@@ -402,6 +440,10 @@ def _render_report(report: ReviewReport) -> None:
             f'<p class="repo-description">{escape(repository.description)}</p>',
             unsafe_allow_html=True,
         )
+
+    _render_scope_notice(report)
+    _render_rubric_notice(report)
+    _render_rubric_evidence(report)
 
     if repository.tree_truncated:
         st.warning(
@@ -436,16 +478,32 @@ def _render_report(report: ReviewReport) -> None:
 
 def _render_score_summary(report: ReviewReport) -> None:
     counts = _check_counts(report.checks)
-    score = _format_points(report.score)
-    available = _format_points(100 - report.score)
-    percentage = round(report.score)
+    if report.presentation_score is None:
+        score_markup = '<div class="score-value score-value-unscored">NOT SCORED</div>'
+        band = "Low software-rubric fit"
+        context = "Reference checks are available, but no numeric verdict is shown."
+        percentage = 0
+        available = "N/A"
+        available_context = "score withheld"
+    else:
+        score = _format_points(report.presentation_score)
+        score_markup = f'<div class="score-value">{score}<span>/100</span></div>'
+        band = score_band(report.presentation_score)
+        context = (
+            "Whole-repository presentation signals; interpret with caution."
+            if report.rubric_assessment.fit == RubricFit.MEDIUM
+            else "Presentation signals—not code quality."
+        )
+        percentage = round(report.presentation_score)
+        available = f"+{_format_points(100 - report.presentation_score)}"
+        available_context = "recoverable points"
     st.markdown(
         '<div class="summary-grid">'
         '<div class="score-card">'
         '<div class="score-label">PORTFOLIO PRESENTATION SCORE</div>'
-        f'<div class="score-value">{score}<span>/100</span></div>'
-        f'<div class="score-band">{escape(score_band(report.score))}</div>'
-        '<div class="score-context">Presentation signals—not code quality.</div>'
+        f"{score_markup}"
+        f'<div class="score-band">{escape(band)}</div>'
+        f'<div class="score-context">{escape(context)}</div>'
         '<div class="score-track">'
         f'<span style="width: {percentage}%"></span></div>'
         "</div>"
@@ -456,15 +514,80 @@ def _render_score_summary(report: ReviewReport) -> None:
         '<div class="signal-card signal-fail"><span>NEEDS WORK</span>'
         f"<strong>{counts[CheckStatus.FAIL]}</strong><small>needs attention</small></div>"
         '<div class="signal-card signal-opportunity"><span>AVAILABLE</span>'
-        f"<strong>+{available}</strong><small>recoverable points</small></div>"
+        f"<strong>{escape(available)}</strong><small>{escape(available_context)}</small></div>"
         "</div>",
         unsafe_allow_html=True,
     )
 
 
+def _render_scope_notice(report: ReviewReport) -> None:
+    """Explain how linked-subdirectory evidence affects the review."""
+    scope_path = report.repository.scope_path
+    if scope_path is None:
+        return
+    st.info(
+        f"Review scope: {scope_path}. File paths, README evidence, and file-based "
+        "checks are limited to this default-branch folder. Repository metadata "
+        "still describes the parent repository.",
+        icon="📁",
+    )
+
+
+def _render_rubric_notice(report: ReviewReport) -> None:
+    """Explain when the software-project rubric is a weak repository match."""
+    assessment = report.rubric_assessment
+    if assessment.fit == RubricFit.LOW:
+        st.warning(
+            f"Software-project rubric fit: Low. {assessment.explanation} "
+            "A numeric score and software-project recommendations are withheld.",
+            icon="⚠️",
+        )
+    elif assessment.fit == RubricFit.MEDIUM:
+        st.info(f"Software-project rubric fit: Medium. {assessment.explanation}")
+
+
+def _render_rubric_evidence(report: ReviewReport) -> None:
+    """Show the deterministic signals behind the repository classification."""
+    assessment = report.rubric_assessment
+    fit_class = assessment.fit.value.casefold()
+    signal_items = "".join(
+        f"<li>{escape(signal)}</li>" for signal in assessment.signals
+    )
+    if not signal_items:
+        signal_items = "<li>No specific classification signals were recorded.</li>"
+
+    with st.expander(
+        "Why this repository type?",
+        expanded=assessment.fit != RubricFit.HIGH,
+    ):
+        st.markdown(
+            '<section class="rubric-evidence" '
+            'aria-label="Repository type classification evidence">'
+            '<div class="rubric-evidence-summary">'
+            '<div><span class="rubric-evidence-label">CLASSIFIED AS</span>'
+            f"<strong>{escape(assessment.repository_kind.value)}</strong></div>"
+            f'<span class="rubric-fit-badge rubric-fit-{fit_class}" '
+            f'aria-label="Software-project rubric fit: {escape(assessment.fit.value)}">'
+            f"{escape(assessment.fit.value.upper())} FIT</span>"
+            "</div>"
+            f'<p class="rubric-evidence-explanation">'
+            f"{escape(assessment.explanation)}</p>"
+            '<div class="rubric-evidence-heading">EVIDENCE USED</div>'
+            f'<ul class="rubric-signal-list">{signal_items}</ul>'
+            '<p class="rubric-method-note">This deterministic classification uses '
+            "repository metadata and default-branch file paths returned by GitHub. "
+            "It does not judge code quality or developer ability.</p>"
+            "</section>",
+            unsafe_allow_html=True,
+        )
+
+
 def _render_repository_facts(report: ReviewReport) -> None:
     repository = report.repository
     facts = (
+        ("REPOSITORY TYPE", report.rubric_assessment.repository_kind.value),
+        ("RUBRIC FIT", report.rubric_assessment.fit.value),
+        ("REVIEW SCOPE", repository.scope_path or "Whole repository"),
         ("LANGUAGE", repository.language or "Unknown"),
         ("DEFAULT BRANCH", repository.default_branch),
         ("STARS", f"{repository.stars:,}"),
@@ -515,20 +638,41 @@ def _render_top_actions(
     top_suggestions = tuple(suggestions[:3])
     projected_score = _projected_score(report.score, top_suggestions)
     st.markdown(
-        '<h2 class="section-heading">HIGHEST-IMPACT ACTIONS</h2>',
+        '<h2 class="section-heading">HIGHEST-IMPACT NEXT STEPS</h2>',
         unsafe_allow_html=True,
     )
+    if report.presentation_score is None:
+        st.markdown(
+            '<div class="empty-state">Software-project recommendations are hidden '
+            "because this repository does not fit the current rubric. Review the "
+            "repository according to its educational or content purpose.</div>",
+            unsafe_allow_html=True,
+        )
+        return
     if not top_suggestions:
         st.markdown(
             '<div class="empty-state">No open recommendations in the current ruleset.</div>',
             unsafe_allow_html=True,
         )
         return
-    st.markdown(
-        '<div class="projection-line">Complete these presentation actions for up to '
-        f"<strong>{_format_points(projected_score)}/100</strong></div>",
-        unsafe_allow_html=True,
+    repository_changes = tuple(
+        suggestion
+        for suggestion in top_suggestions
+        if suggestion.kind == SuggestionKind.REPOSITORY_CHANGE
     )
+    if repository_changes:
+        st.markdown(
+            '<div class="projection-line">Confirmed repository changes could improve '
+            "the score to "
+            f"<strong>{_format_points(projected_score)}/100</strong></div>",
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            '<div class="projection-line">These findings need manual verification '
+            "before a score improvement can be claimed.</div>",
+            unsafe_allow_html=True,
+        )
     for index, suggestion in enumerate(top_suggestions, start=1):
         _render_suggestion(index, suggestion, report, detailed=False)
 
@@ -538,6 +682,14 @@ def _render_category_scores(report: ReviewReport) -> None:
         '<h2 class="section-heading">CATEGORY BREAKDOWN</h2>',
         unsafe_allow_html=True,
     )
+    if report.presentation_score is None:
+        st.markdown(
+            '<div class="empty-state">Category scores are hidden because the '
+            "software-project rubric has low applicability. The Checks tab keeps the "
+            "underlying evidence available for reference.</div>",
+            unsafe_allow_html=True,
+        )
+        return
     rows: list[str] = []
     for category_score in report.category_scores:
         ratio = category_score.points / category_score.max_points
@@ -633,6 +785,11 @@ def _render_checks(report: ReviewReport) -> None:
 
 def _check_rows_markup(checks: Sequence[ScoredCheck], report: ReviewReport) -> str:
     rows: list[str] = []
+    suggestions_by_check = {
+        suggestion.check_id: suggestion
+        for suggestion in generate_suggestions(report, limit=None)
+        if suggestion.check_id is not None
+    }
     for check in checks:
         status = STATUS_LABELS[check.status]
         status_class = check.status.value
@@ -652,12 +809,31 @@ def _check_rows_markup(checks: Sequence[ScoredCheck], report: ReviewReport) -> s
         )
         recommendation_markup = ""
         if check.status != CheckStatus.PASS:
+            suggestion = suggestions_by_check.get(check.check_id)
+            if report.presentation_score is None:
+                next_step_label = "RUBRIC NOTE"
+                next_step = (
+                    "No software-project change is recommended because this repository "
+                    "has low rubric applicability."
+                )
+            elif suggestion is not None:
+                next_step_label = (
+                    "VERIFY"
+                    if suggestion.kind == SuggestionKind.MANUAL_REVIEW
+                    else "NEXT STEP"
+                )
+                next_step = suggestion.action
+            else:
+                next_step_label = "NEXT STEP"
+                next_step = (
+                    "Resolve the related parent finding before acting on this check."
+                )
             recommendation_markup = (
                 '<div class="recommendation-details">'
                 "<div><span>TARGET</span>"
                 f"<p><code>{escape(check.target)}</code></p></div>"
-                "<div><span>NEXT STEP</span>"
-                f"<p>{escape(check.recommendation)}</p></div>"
+                f"<div><span>{escape(next_step_label)}</span>"
+                f"<p>{escape(next_step)}</p></div>"
                 "</div>"
             )
         rows.append(
@@ -750,12 +926,17 @@ def _render_suggestions(
     report: ReviewReport, suggestions: Sequence[Suggestion]
 ) -> None:
     st.markdown(
-        '<h2 class="section-heading">IMPROVEMENT ISSUES</h2>',
+        '<h2 class="section-heading">IMPROVEMENTS & VERIFICATION</h2>',
         unsafe_allow_html=True,
     )
     if not suggestions:
+        message = (
+            "Software-project recommendations are hidden because rubric fit is low."
+            if report.presentation_score is None
+            else "No open recommendations in the current ruleset."
+        )
         st.markdown(
-            '<div class="empty-state">No open recommendations in the current ruleset.</div>',
+            f'<div class="empty-state">{escape(message)}</div>',
             unsafe_allow_html=True,
         )
         return
@@ -776,6 +957,15 @@ def _render_suggestion(
     detailed: bool,
 ) -> None:
     priority_class = suggestion.priority.casefold()
+    kind_class = suggestion.kind.name.casefold().replace("_", "-")
+    kind_label = (
+        "VERIFY" if suggestion.kind == SuggestionKind.MANUAL_REVIEW else "CHANGE"
+    )
+    potential_label = (
+        "VERIFY"
+        if suggestion.kind == SuggestionKind.MANUAL_REVIEW
+        else f"+{_format_points(suggestion.potential_points)} pts"
+    )
     source_check = _source_check(report, suggestion)
     details = ""
     if detailed:
@@ -794,6 +984,8 @@ def _render_suggestion(
         '<div class="recommendation-header">'
         f'<span class="priority priority-{priority_class}">'
         f"{escape(suggestion.priority.upper())}</span>"
+        f'<span class="suggestion-kind suggestion-kind-{kind_class}">'
+        f"{kind_label}</span>"
         f"<strong>{escape(suggestion.title)}</strong>"
         f'<span class="recommendation-category">{escape(suggestion.category)}</span>'
         "</div>"
@@ -802,7 +994,7 @@ def _render_suggestion(
         f"<code>{escape(source_check.target)}</code></div>"
         f"{details}</div>"
         '<span class="potential-points">'
-        f"+{_format_points(suggestion.potential_points)} pts"
+        f"{escape(potential_label)}"
         "</span></article>",
         unsafe_allow_html=True,
     )
@@ -832,7 +1024,15 @@ def _check_counts(checks: Sequence[ScoredCheck]) -> dict[CheckStatus, int]:
 
 def _projected_score(score: float, suggestions: Sequence[Suggestion]) -> float:
     """Return the capped score available from the displayed suggestions."""
-    return min(100.0, score + sum(item.potential_points for item in suggestions))
+    return min(
+        100.0,
+        score
+        + sum(
+            item.potential_points
+            for item in suggestions
+            if item.kind == SuggestionKind.REPOSITORY_CHANGE
+        ),
+    )
 
 
 def _recent_repositories() -> tuple[str, ...]:

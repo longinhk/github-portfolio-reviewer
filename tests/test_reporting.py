@@ -1,6 +1,7 @@
 """Tests for deterministic, safe report exports."""
 
 import json
+from dataclasses import replace
 from datetime import UTC, datetime
 
 from github_portfolio_reviewer.models import (
@@ -8,11 +9,14 @@ from github_portfolio_reviewer.models import (
     CheckId,
     CheckStatus,
     EvidenceConfidence,
+    RepositoryKind,
     RepositoryReference,
     RepositorySnapshot,
     RepositoryTextFile,
     ReviewMode,
     ReviewReport,
+    RubricAssessment,
+    RubricFit,
     ScoredCheck,
 )
 from github_portfolio_reviewer.reporting import (
@@ -97,13 +101,14 @@ def test_json_report_has_stable_explicit_schema() -> None:
         "ruleset_version",
         "review_mode",
         "review_scope",
+        "rubric_assessment",
         "repository",
         "score",
         "categories",
         "checks",
         "suggestions",
     ]
-    assert data["schema_version"] == "1.1"
+    assert data["schema_version"] == "1.3"
     assert data["ruleset_version"] == "2.1.0"
     assert data["review_mode"] == "Python internship"
     assert data["score"] == {
@@ -112,10 +117,19 @@ def test_json_report_has_stable_explicit_schema() -> None:
         "max_points": 100,
         "band": "Early stage",
     }
+    assert data["rubric_assessment"] == {
+        "repository_type": "Unknown repository type",
+        "fit": "Medium",
+        "score_applicable": True,
+        "explanation": "Repository type has not been classified.",
+        "signals": [],
+    }
     assert data["review_scope"] == {
         "public_repository_only": True,
         "default_branch_only": True,
         "bounded_inspection": True,
+        "kind": "whole_repository",
+        "path": None,
         "code_executed": False,
         "ai_api_used": False,
         "required_paid_services": False,
@@ -123,9 +137,11 @@ def test_json_report_has_stable_explicit_schema() -> None:
     assert data["repository"]["created_at"] == "2025-01-02T03:04:00+00:00"
     assert data["checks"][0]["confidence"] == "verified"
     assert data["checks"][1]["confidence"] == "sampled"
+    assert data["checks"][1]["recommendation_kind"] == "Manual review"
     assert data["checks"][1]["sources"] == ["README|draft.md", "docs/usage.md"]
     assert data["checks"][1]["target"] == "README.md | docs/usage.md"
     assert data["suggestions"][0]["check_id"] == "readme_usage"
+    assert data["suggestions"][0]["kind"] == "Manual review"
 
 
 def test_exports_exclude_raw_repository_content_and_timestamps() -> None:
@@ -156,7 +172,7 @@ def test_markdown_report_contains_evidence_recommendations_and_no_ai_note() -> N
     assert "One command \\| no output<br>Add expected output." in markdown
     assert "README\\|draft.md" in markdown
     assert "README.md \\| docs/usage.md" in markdown
-    assert "Add a copyable example \\| and its output.<br>Keep it short." in markdown
+    assert "manual review" in markdown
     assert "`readme_usage`" in markdown
     assert "| PARTIAL | SAMPLED |" in markdown
     assert (
@@ -164,6 +180,51 @@ def test_markdown_report_contains_evidence_recommendations_and_no_ai_note() -> N
     )
     assert "Required paid services: $0" in markdown
     assert "No AI API is required." in markdown
+
+
+def test_low_fit_report_withholds_numeric_score_and_recommendations() -> None:
+    report = replace(
+        _make_report(),
+        rubric_assessment=RubricAssessment(
+            repository_kind=RepositoryKind.CONTENT,
+            fit=RubricFit.LOW,
+            explanation="This is educational content.",
+        ),
+    )
+
+    data = report_to_dict(report)
+    markdown = render_markdown_report(report)
+
+    assert data["score"] == {
+        "kind": "portfolio_presentation",
+        "points": None,
+        "max_points": None,
+        "band": "Not scored",
+    }
+    assert data["suggestions"] == []
+    assert all(check["recommendation"] is None for check in data["checks"])
+    assert "**Not scored" in markdown
+    assert "Category scores are hidden" in markdown
+
+
+def test_scoped_report_exports_the_selected_subdirectory() -> None:
+    report = _make_report()
+    scoped_report = replace(
+        report,
+        repository=replace(
+            report.repository,
+            html_url=("https://github.com/example/portfolio/tree/main/packages/api"),
+            scope_path="packages/api",
+        ),
+    )
+
+    data = report_to_dict(scoped_report)
+    markdown = render_markdown_report(scoped_report)
+
+    assert data["review_scope"]["kind"] == "subdirectory"
+    assert data["review_scope"]["path"] == "packages/api"
+    assert "| Review scope | packages/api |" in markdown
+    assert "selected folder on a public repository's default branch" in markdown
 
 
 def test_markdown_table_rows_never_contain_unescaped_content_newlines() -> None:

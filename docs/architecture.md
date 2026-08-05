@@ -12,8 +12,8 @@ Application service (service.py)
         |
         +----> GitHub API adapter (github_client.py) ----> GitHub REST API
         |
-        +----> Analyzer ----> Scoring ----> Suggestions
-        |           \___________ domain models ___________/
+        +----> Analyzer ----> Applicability ----> Scoring ----> Suggestions
+        |           \________________ domain models ________________/
         |
         +----> Markdown / JSON reporting
 ```
@@ -23,15 +23,18 @@ Application service (service.py)
 - `models.py` defines immutable data exchanged between layers.
 - `github_client.py` validates and normalizes repository input, then converts
   GitHub JSON into a typed `RepositorySnapshot`. It also owns bounded retries,
-  caching, and bucketed text-file sampling. Raw dictionaries do not escape this
-  adapter.
+  caching, optional default-branch subdirectory scoping, and bucketed text-file
+  sampling. Raw dictionaries do not escape this adapter.
 - `analyzer.py` applies deterministic checks to README text, metadata, file
   paths, and selected text evidence. It performs no HTTP requests and never
   executes repository code.
+- `applicability.py` conservatively classifies software projects, monorepos,
+  content repositories, and ambiguous layouts before a numeric score is shown.
 - `scoring.py` maps findings to an explicit 100-point portfolio-presentation
   rubric and records the ruleset version.
 - `suggestions.py` converts incomplete checks into a prioritized, deduplicated
-  action plan. A review focus changes ordering only, not points.
+  action plan. It separates repository changes from manual verification. A
+  review focus changes ordering only, not points.
 - `reporting.py` creates stable Markdown and JSON exports from allow-listed
   report fields. Raw README and file contents are excluded.
 - `service.py` coordinates one review use case.
@@ -45,6 +48,28 @@ The score and recommendations come from explicit Python rules. The application
 does not call an LLM, embedding model, or other AI service, so no AI API key is
 needed. Even the AI/ML internship focus is a deterministic suggestion filter.
 Keeping one comparable rubric avoids hidden score changes between focuses.
+
+### Applicability gate
+
+Ruleset 1.3 keeps one software-project rubric rather than inventing separate
+scores for every repository purpose. Deterministic path, manifest, source, test,
+content-file, name, description, and topic signals produce a repository type and
+rubric fit:
+
+- conventional software projects have high fit and receive a numeric score;
+- monorepos and ambiguous layouts have medium fit, retain a whole-repository
+  score, and display a caution;
+- clear educational or content repositories have low fit, so the numeric score,
+  category totals, and software-project recommendations are withheld.
+
+Monorepo detection counts distinct manifest-backed project roots. Manifests in
+documentation, tests, examples, fixtures, and vendored support directories do
+not create project roots, preventing support tooling from triggering a
+whole-repository warning.
+
+The assessment is intentionally conservative. It does not use stars, forks, an
+AI model, or repository popularity. An unfamiliar layout becomes medium fit
+rather than being confidently misclassified.
 
 ### Bounded, category-reserved content inspection
 
@@ -74,12 +99,26 @@ Status determines points; confidence communicates evidence completeness without
 silently changing the rubric. A clean bounded credential scan is therefore
 sampled evidence, not a claim that the entire repository is secret-free.
 
+Suggestion type is also separate from points. Verified defects can produce a
+repository-change suggestion. Sampled, unverified, provisional, or explicitly
+review-dependent findings produce a zero-point manual-verification step instead
+of claiming that a repository change is required.
+
 ### Repository URL normalization
 
 The input parser accepts repository-root URLs plus GitHub `/tree/...` and
-`/blob/...` URLs, then reduces them to `owner/repository`. Query strings,
-fragments, ports, and unrelated GitHub subpages remain invalid. The normalized
-reference selects the repository only: analysis uses its default branch.
+`/blob/...` URLs. Safe decoded `/tree/` segments are retained as a location
+hint. When the user opts into folder scope, the client resolves the hint against
+the default branch reported by GitHub, fetches that directory's README, and
+relativizes its file evidence. Whole-repository mode remains available and is
+the behavior for root, SSH, and `/blob/` inputs. Non-default-branch scope is
+rejected rather than silently reviewing another revision. Query strings,
+fragments, ports, unrelated GitHub subpages, and traversal-like segments remain
+invalid.
+
+Scoped reports intentionally retain parent-repository metadata while limiting
+README and file-based checks to the selected folder. Root and scoped snapshots
+use separate cache entries.
 
 ### Immutable snapshot
 
@@ -123,6 +162,11 @@ Certificate, key, or credential-like fixtures under conventional test, fixture,
 example, or sample paths are advisory rather than automatic production-secret
 failures. Production-like locations still fail and require manual inspection.
 Neither result is a security audit.
+
+Contributing guides, codes of conduct, and security policies may be inherited
+from a repository owner's default community files. When none appears in the
+repository tree, the result is unverified partial evidence and the user is asked
+to check manually instead of being told the file is definitely missing.
 
 ### Safe portable reports
 

@@ -7,6 +7,7 @@ from streamlit.testing.v1 import AppTest
 
 from github_portfolio_reviewer.analyzer import analyze_repository
 from github_portfolio_reviewer.app import (
+    LINKED_SCOPE_LABEL,
     _check_counts,
     _check_rows_markup,
     _error_presentation,
@@ -26,11 +27,13 @@ from github_portfolio_reviewer.models import (
     CheckId,
     CheckStatus,
     EvidenceConfidence,
+    RepositoryReference,
     RepositorySnapshot,
     ReviewMode,
     ReviewReport,
     ScoredCheck,
     Suggestion,
+    SuggestionKind,
 )
 from github_portfolio_reviewer.scoring import score_repository
 
@@ -69,12 +72,17 @@ def test_initial_page_renders_without_exceptions() -> None:
     repository_input = next(
         text_input for text_input in app.text_input if text_input.label == "Repository"
     )
-    assert "/tree/..." in repository_input.help
+    assert "/tree/" in repository_input.help
     assert "default branch" in repository_input.help
     review_focus = next(
         selectbox for selectbox in app.selectbox if selectbox.label == "Review focus"
     )
     assert review_focus.value == ReviewMode.GENERAL.value
+    review_scope = next(
+        selectbox for selectbox in app.selectbox if selectbox.label == "Review scope"
+    )
+    assert review_scope.value == LINKED_SCOPE_LABEL
+    assert "default-branch /tree/ URL" in review_scope.help
     assert any("No AI API" in caption.value for caption in app.caption)
     assert any(
         expander.label == "Scope, limitations & cost" for expander in app.expander
@@ -121,7 +129,45 @@ def test_report_page_renders_all_sections_without_exceptions(
         "PORTFOLIO PRESENTATION SCORE" in markdown.value for markdown in app.markdown
     )
     assert any(
+        expander.label == "Why this repository type?" for expander in app.expander
+    )
+    evidence_markup = next(
+        markdown.value
+        for markdown in app.markdown
+        if '<section class="rubric-evidence"' in markdown.value
+    )
+    assert report.rubric_assessment.explanation in evidence_markup
+    assert all(signal in evidence_markup for signal in report.rubric_assessment.signals)
+    assert 'aria-label="Repository type classification evidence"' in evidence_markup
+    assert any(
         expander.label == "Scope, limitations & cost" for expander in app.expander
+    )
+
+
+def test_scoped_report_identifies_the_linked_folder(
+    make_snapshot: Callable[..., RepositorySnapshot],
+) -> None:
+    entry_point = Path(__file__).parents[1] / "streamlit_app.py"
+    snapshot = make_snapshot(
+        html_url="https://github.com/example/project/tree/main/packages/api",
+        files=("pyproject.toml", "api.py", "tests/test_api.py"),
+        scope_path="packages/api",
+    )
+    report = score_repository(snapshot, analyze_repository(snapshot))
+    app = AppTest.from_file(str(entry_point))
+    app.session_state["review_report"] = report
+
+    app.run(timeout=10)
+
+    assert not app.exception
+    assert any("Review scope: packages/api" in info.value for info in app.info)
+    assert any(
+        "SUBDIRECTORY" in markdown.value and "repo-label-scope" in markdown.value
+        for markdown in app.markdown
+    )
+    assert any(
+        "REVIEW SCOPE" in markdown.value and "packages/api" in markdown.value
+        for markdown in app.markdown
     )
 
 
@@ -228,6 +274,63 @@ def test_projected_score_is_capped_at_100() -> None:
 
     assert _projected_score(72, suggestions) == 85
     assert _projected_score(96, suggestions) == 100
+
+
+def test_manual_review_does_not_claim_recoverable_points() -> None:
+    suggestions = (
+        Suggestion(
+            "Medium",
+            Category.CI_CD,
+            "Pinned actions",
+            "Review remaining workflows.",
+            4,
+            kind=SuggestionKind.MANUAL_REVIEW,
+        ),
+    )
+
+    assert _projected_score(80, suggestions) == 80
+
+
+def test_low_fit_content_repository_is_rendered_without_numeric_score(
+    make_snapshot: Callable[..., RepositorySnapshot],
+) -> None:
+    entry_point = Path(__file__).parents[1] / "streamlit_app.py"
+    snapshot = make_snapshot(
+        reference=RepositoryReference("example", "learning-notes"),
+        description="Lecture notes, slides, and learning resources",
+        readme="# Learning notes",
+        files=(
+            "README.md",
+            "notes/introduction.md",
+            "notes/model.ipynb",
+            "slides/week-1.pdf",
+        ),
+    )
+    report = score_repository(snapshot, analyze_repository(snapshot))
+    app = AppTest.from_file(str(entry_point))
+    app.session_state["review_report"] = report
+
+    app.run(timeout=10)
+
+    assert not app.exception
+    assert report.presentation_score is None
+    assert any("rubric fit: Low" in warning.value for warning in app.warning)
+    assert any(
+        "score-value-unscored" in markdown.value and "NOT SCORED" in markdown.value
+        for markdown in app.markdown
+    )
+    assert any("⚠ LOW RUBRIC FIT" in markdown.value for markdown in app.markdown)
+    evidence_markup = next(
+        markdown.value
+        for markdown in app.markdown
+        if '<section class="rubric-evidence"' in markdown.value
+    )
+    assert "Educational or content repository" in evidence_markup
+    assert "Content-oriented repository" in evidence_markup
+    assert "4 content file(s) and 0 test file(s)" in evidence_markup
+    assert any(
+        "Category scores are hidden" in markdown.value for markdown in app.markdown
+    )
 
 
 def test_recent_repositories_are_most_recent_unique_and_limited() -> None:

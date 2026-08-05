@@ -7,8 +7,10 @@ from github_portfolio_reviewer.models import (
     CheckId,
     CheckStatus,
     EvidenceConfidence,
+    RepositoryReference,
     RepositorySnapshot,
     ReviewMode,
+    SuggestionKind,
 )
 from github_portfolio_reviewer.scoring import score_repository
 from github_portfolio_reviewer.suggestions import generate_suggestions
@@ -91,7 +93,7 @@ def test_review_mode_reorders_relevant_suggestions_without_changing_score(
     }
 
 
-def test_incomplete_evidence_does_not_create_repository_change_suggestions(
+def test_incomplete_evidence_creates_manual_review_not_change_suggestions(
     make_snapshot: Callable[..., RepositorySnapshot],
 ) -> None:
     findings = [
@@ -110,6 +112,63 @@ def test_incomplete_evidence_does_not_create_repository_change_suggestions(
         )
 
     report = score_repository(make_snapshot(), tuple(findings))
+    suggestions = generate_suggestions(report, limit=None)
 
     assert report.score < 100
+    assert {suggestion.check_id for suggestion in suggestions} == {
+        CheckId.TOPICS,
+        CheckId.LOCK_FILE,
+    }
+    assert all(
+        suggestion.kind == SuggestionKind.MANUAL_REVIEW for suggestion in suggestions
+    )
+    assert all(suggestion.potential_points == 0 for suggestion in suggestions)
+
+
+def test_low_fit_repository_suppresses_software_project_suggestions(
+    make_snapshot: Callable[..., RepositorySnapshot],
+) -> None:
+    findings = tuple(
+        AnalysisFinding(check_id, CheckStatus.FAIL, "missing") for check_id in CheckId
+    )
+    snapshot = make_snapshot(
+        reference=RepositoryReference("example", "learning-notes"),
+        description="Lecture notes, slides, and learning resources",
+        files=(
+            "README.md",
+            "notes/intro.md",
+            "notes/model.ipynb",
+            "slides/week-1.pdf",
+        ),
+    )
+    report = score_repository(snapshot, findings)
+
+    assert report.presentation_score is None
     assert generate_suggestions(report, limit=None) == ()
+
+
+def test_sampled_workflow_result_requests_verification_without_points(
+    make_snapshot: Callable[..., RepositorySnapshot],
+) -> None:
+    findings = [
+        AnalysisFinding(check_id, CheckStatus.PASS, "present") for check_id in CheckId
+    ]
+    index = list(CheckId).index(CheckId.ACTIONS_PINNED)
+    findings[index] = AnalysisFinding(
+        CheckId.ACTIONS_PINNED,
+        CheckStatus.PARTIAL,
+        "Inspected workflows are pinned; additional workflows were not inspected.",
+        confidence=EvidenceConfidence.SAMPLED,
+    )
+    report = score_repository(make_snapshot(), tuple(findings))
+
+    suggestion = next(
+        item
+        for item in generate_suggestions(report, limit=None)
+        if item.check_id == CheckId.ACTIONS_PINNED
+    )
+
+    assert suggestion.kind == SuggestionKind.MANUAL_REVIEW
+    assert suggestion.potential_points == 0
+    assert "remaining workflow files" in suggestion.action
+    assert "do not change" in suggestion.action
