@@ -1,6 +1,6 @@
 """Streamlit interface for the GitHub Portfolio Reviewer."""
 
-import hashlib
+import logging
 from collections.abc import Sequence
 from datetime import datetime
 from html import escape
@@ -38,6 +38,7 @@ from github_portfolio_reviewer.service import review_repository
 from github_portfolio_reviewer.styles import github_native_css
 from github_portfolio_reviewer.suggestions import generate_suggestions
 
+LOGGER = logging.getLogger(__name__)
 EXAMPLE_REPOSITORY = "longinhk/github-portfolio-reviewer"
 RECENT_REPOSITORY_LIMIT = 4
 LINKED_SCOPE_LABEL = "Linked folder if present"
@@ -125,24 +126,10 @@ def _render_product_bar() -> str | None:
                 horizontal=True,
                 key="theme_mode",
             )
-            token = st.text_input(
-                "GitHub token",
-                type="password",
-                key="github_token",
-                help=(
-                    "Optional. Use a personal token only in a deployment you control. "
-                    "It raises GitHub API limits; public repositories need no special "
-                    "scopes."
-                ),
-            )
-            st.caption(
-                "Kept in this session, sent only to GitHub for requests, and never "
-                "included in reports."
-            )
+            st.caption("Repository reviews use read-only GitHub requests.")
 
     configured_token = _secret_token()
-    effective_token = token.strip() or configured_token
-    api_mode = "AUTHENTICATED" if effective_token else "PUBLIC API"
+    api_mode = "AUTHENTICATED" if configured_token else "PUBLIC API"
 
     with brand_column:
         st.markdown(
@@ -160,7 +147,7 @@ def _render_product_bar() -> str | None:
         )
 
     st.markdown('<div class="product-divider"></div>', unsafe_allow_html=True)
-    return effective_token
+    return configured_token
 
 
 def _render_introduction() -> None:
@@ -321,6 +308,17 @@ def _run_review(
         status.update(label="Review failed", state="error", expanded=False)
         st.error(f"**{title}**\n\n{error}\n\n{guidance}")
         return False
+    except Exception:
+        LOGGER.exception("Unexpected repository review failure")
+        guidance = "Try again. The repository was not changed."
+        if has_previous_report:
+            guidance += " Your previous successful report remains displayed below."
+        status.update(label="Review failed", state="error", expanded=False)
+        st.error(
+            "**The review stopped unexpectedly**\n\n"
+            f"An internal error occurred.\n\n{guidance}"
+        )
+        return False
 
     status.update(label="Review complete", state="complete", expanded=False)
     st.session_state["review_report"] = report
@@ -328,21 +326,15 @@ def _run_review(
     return True
 
 
+@st.cache_resource(show_spinner=False)
+def _shared_review_client(token: str) -> GitHubClient:
+    """Return one process-wide client with a bounded, thread-safe snapshot cache."""
+    return GitHubClient(token=token or None)
+
+
 def _review_client(token: str | None) -> GitHubClient:
-    """Reuse one session-local client so its bounded response cache is effective."""
-    normalized = token.strip() if token else ""
-    fingerprint = (
-        hashlib.sha256(normalized.encode()).hexdigest() if normalized else "public"
-    )
-    existing = st.session_state.get("_github_client")
-    if (
-        not isinstance(existing, GitHubClient)
-        or st.session_state.get("_github_client_fingerprint") != fingerprint
-    ):
-        existing = GitHubClient(token=normalized or None)
-        st.session_state["_github_client"] = existing
-        st.session_state["_github_client_fingerprint"] = fingerprint
-    return existing
+    """Reuse public evidence across browser sessions for five minutes."""
+    return _shared_review_client(token.strip() if token else "")
 
 
 def _error_presentation(error: GitHubClientError) -> tuple[str, str]:
@@ -359,13 +351,13 @@ def _error_presentation(error: GitHubClientError) -> tuple[str, str]:
         )
     if isinstance(error, AuthenticationError):
         return (
-            "GitHub token was rejected",
-            "Open Settings, remove the token, or replace it with a valid token.",
+            "Configured GitHub token was rejected",
+            "The deployment owner must remove or replace GITHUB_TOKEN in Streamlit Secrets.",
         )
     if isinstance(error, RateLimitError):
         return (
             "GitHub API limit reached",
-            "Add a token in Settings or wait until GitHub resets the request limit.",
+            "Wait for GitHub to reset the limit. Deployment owners can configure a read-only token through Streamlit Secrets.",
         )
     if isinstance(error, GitHubAPIError):
         return (
@@ -489,21 +481,35 @@ def _render_score_summary(report: ReviewReport) -> None:
         score = _format_points(report.presentation_score)
         score_markup = f'<div class="score-value">{score}<span>/100</span></div>'
         band = score_band(report.presentation_score)
-        context = (
-            "Whole-repository presentation signals; interpret with caution."
-            if report.rubric_assessment.fit == RubricFit.MEDIUM
-            else "Presentation signals—not code quality."
-        )
+        if report.score_is_provisional:
+            context = "Provisional result—some evidence was sampled or unavailable."
+        elif report.rubric_assessment.fit == RubricFit.MEDIUM:
+            context = "Whole-repository presentation signals; interpret with caution."
+        else:
+            context = "Presentation signals—not code quality."
         percentage = round(report.presentation_score)
         available = f"+{_format_points(100 - report.presentation_score)}"
-        available_context = "recoverable points"
+        available_context = "unearned rubric points"
+    confidence = report.evidence_counts
+    limited_evidence = sum(
+        count
+        for level, count in confidence.items()
+        if level != EvidenceConfidence.VERIFIED
+    )
+    score_label = (
+        "PROVISIONAL PORTFOLIO PRESENTATION SCORE"
+        if report.presentation_score is not None and report.score_is_provisional
+        else "PORTFOLIO PRESENTATION SCORE"
+    )
     st.markdown(
         '<div class="summary-grid">'
         '<div class="score-card">'
-        '<div class="score-label">PORTFOLIO PRESENTATION SCORE</div>'
+        f'<div class="score-label">{score_label}</div>'
         f"{score_markup}"
         f'<div class="score-band">{escape(band)}</div>'
-        f'<div class="score-context">{escape(context)}</div>'
+        f'<div class="score-context">{escape(context)} '
+        f"{confidence[EvidenceConfidence.VERIFIED]} verified · "
+        f"{limited_evidence} limited.</div>"
         '<div class="score-track">'
         f'<span style="width: {percentage}%"></span></div>'
         "</div>"
@@ -590,6 +596,10 @@ def _render_repository_facts(report: ReviewReport) -> None:
         ("REVIEW SCOPE", repository.scope_path or "Whole repository"),
         ("LANGUAGE", repository.language or "Unknown"),
         ("DEFAULT BRANCH", repository.default_branch),
+        (
+            "REVISION",
+            repository.commit_sha[:12] if repository.commit_sha else "Unknown",
+        ),
         ("STARS", f"{repository.stars:,}"),
         ("FORKS", f"{repository.forks:,}"),
         ("OPEN ISSUES", f"{repository.open_issues:,}"),
@@ -891,9 +901,25 @@ def _render_scope_and_cost() -> None:
 
 def _source_url(report: ReviewReport, path: str) -> str:
     """Return a GitHub blob URL for one evidence path."""
-    branch = quote(report.repository.default_branch, safe="")
-    encoded_path = quote(path, safe="/")
-    return f"{report.repository.html_url}/blob/{branch}/{encoded_path}"
+    repository = report.repository
+    path_by_normalized_name = {
+        candidate.replace("\\", "/").strip("/").casefold(): candidate
+        for candidate in repository.files
+    }
+    if repository.readme_path is not None:
+        path_by_normalized_name[
+            repository.readme_path.replace("\\", "/").strip("/").casefold()
+        ] = repository.readme_path
+        path_by_normalized_name.setdefault("readme.md", repository.readme_path)
+    resolved_path = path_by_normalized_name.get(
+        path.replace("\\", "/").strip("/").casefold(), path
+    )
+    if repository.scope_path:
+        resolved_path = f"{repository.scope_path}/{resolved_path}"
+    revision = quote(repository.commit_sha or repository.default_branch, safe="")
+    encoded_path = quote(resolved_path, safe="/")
+    repository_url = f"https://github.com/{repository.reference.full_name}"
+    return f"{repository_url}/blob/{revision}/{encoded_path}"
 
 
 def _filter_checks(

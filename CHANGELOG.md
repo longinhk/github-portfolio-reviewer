@@ -8,6 +8,15 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Ruleset 1.4 commit-pinned evidence: README, tree, and inspected files are read
+  from one resolved default-branch revision, which is displayed, exported, and
+  used in evidence links.
+- Explicit provisional-score semantics and verified, sampled, unverified, and
+  provisional evidence counts in the UI and exports.
+- Twelve frozen offline benchmark shapes for repository classification, rubric
+  fit, score ranges, malformed CI, weak tests, and incomplete GitHub evidence.
+- Python 3.13 compatibility testing alongside the protected Python 3.12 quality
+  job.
 - Ruleset 1.3 deterministic repository-type and rubric-fit assessment. Clear
   educational/content repositories are marked not scored, while monorepos and
   ambiguous layouts display a whole-repository caution.
@@ -32,7 +41,7 @@ All notable changes to this project are documented here. The format follows
 - Explicit student-project scope, honest portfolio claims, required-cost table,
   and current Streamlit Community Cloud deployment guidance.
 - GitHub-inspired dark and light themes.
-- First-viewport score, status counts, recoverable points, and top actions.
+- First-viewport score, status counts, unearned rubric points, and top actions.
 - Status, category, and text filters for repository checks.
 - Detailed recommendation issues with target files and current evidence.
 - Responsive mobile layouts and specific GitHub API error guidance.
@@ -41,8 +50,8 @@ All notable changes to this project are documented here. The format follows
 - Review focuses for General, Python, AI/ML, data-science, and backend internship
   applications without changing the comparable score.
 - Stable Markdown and JSON report downloads that exclude raw repository content.
-- Five-minute session-local caching and one bounded retry for temporary GitHub
-  or connection failures.
+- Five-minute process-wide bounded caching and one bounded retry for temporary
+  GitHub or connection failures.
 - Versioned scoring rules with direct evidence-file links and explicit next
   steps for incomplete checks.
 - Clear guarantees that no AI API, model key, or paid inference service is used.
@@ -51,6 +60,18 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- Public visitors no longer enter GitHub credentials. An optional token is read
+  only from deployment secrets, reducing credential-handling risk.
+- The clean credential-pattern result is sampled and receives partial credit;
+  it no longer implies that uninspected files or Git history are secret-free.
+- README detail, installation, CI, and test-quality checks require stronger
+  evidence instead of passing on repeated filler, empty headings, workflow
+  filenames, or test names alone.
+- API resilience now includes one retry for GitHub 500 responses, shorter
+  optional-file timeouts, and early stopping after repeated optional-inspection
+  transport failures.
+- Evidence links preserve scoped paths and filename casing and point to the
+  exact reviewed commit.
 - Monorepo detection now ignores manifests inside documentation, tests,
   examples, fixtures, and vendored support trees while retaining genuine nested
   projects.

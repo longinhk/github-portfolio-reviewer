@@ -8,6 +8,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import PurePosixPath
+from threading import RLock
 from time import monotonic, sleep
 from typing import Any
 from urllib.parse import quote, unquote, urlparse
@@ -28,7 +29,7 @@ MAX_INSPECTED_FILE_BYTES = 100 * 1024
 SNAPSHOT_CACHE_SIZE = 32
 DEFAULT_CACHE_TTL_SECONDS = 5 * 60
 RETRY_DELAY_SECONDS = 0.25
-RETRIABLE_STATUS_CODES = {502, 503, 504}
+RETRIABLE_STATUS_CODES = {500, 502, 503, 504}
 
 TEST_CONFIG_NAMES = {
     "conftest.py",
@@ -206,6 +207,7 @@ class GitHubClient:
         token: str | None = None,
         *,
         timeout: float = 10.0,
+        optional_timeout: float = 4.0,
         session: requests.Session | None = None,
         cache_ttl: float = DEFAULT_CACHE_TTL_SECONDS,
         clock: Callable[[], float] = monotonic,
@@ -213,6 +215,7 @@ class GitHubClient:
     ) -> None:
         """Initialize the client with optional auth and injectable test boundaries."""
         self._timeout = timeout
+        self._optional_timeout = min(timeout, optional_timeout)
         self._session = session or requests.Session()
         self._cache_ttl = cache_ttl
         self._clock = clock
@@ -220,6 +223,7 @@ class GitHubClient:
         self._snapshot_cache: OrderedDict[str, tuple[float, RepositorySnapshot]] = (
             OrderedDict()
         )
+        self._lock = RLock()
         self._headers = {
             "Accept": "application/vnd.github+json",
             "User-Agent": "github-portfolio-reviewer",
@@ -235,6 +239,19 @@ class GitHubClient:
         scope_to_linked_subdirectory: bool = False,
     ) -> RepositorySnapshot:
         """Collect evidence for a repository or its linked default-branch folder."""
+        with self._lock:
+            return self._fetch_repository(
+                reference,
+                scope_to_linked_subdirectory=scope_to_linked_subdirectory,
+            )
+
+    def _fetch_repository(
+        self,
+        reference: RepositoryReference,
+        *,
+        scope_to_linked_subdirectory: bool,
+    ) -> RepositorySnapshot:
+        """Collect one immutable snapshot while holding the client lock."""
         linked_tree_path = (
             reference.linked_tree_path if scope_to_linked_subdirectory else ()
         )
@@ -254,20 +271,26 @@ class GitHubClient:
         encoded_name = quote(canonical_reference.full_name, safe="/")
         default_branch = _required_string(metadata, "default_branch")
         scope_path = _resolve_linked_subdirectory(linked_tree_path, default_branch)
-        readme = self._fetch_readme(
-            encoded_name,
-            branch=default_branch,
-            scope_path=scope_path,
-        )
         repository_size = metadata.get("size")
-        if (
+        repository_is_empty = (
             isinstance(repository_size, int)
             and not isinstance(repository_size, bool)
             and repository_size == 0
-        ):
+        )
+        commit_sha = None
+        if not repository_is_empty:
+            commit_sha = self._fetch_revision_sha(encoded_name, default_branch)
+        readme, readme_path = self._fetch_readme(
+            encoded_name,
+            revision=commit_sha or default_branch,
+            scope_path=scope_path,
+        )
+        if repository_is_empty:
             blobs, tree_truncated = (), False
         else:
-            blobs, tree_truncated = self._fetch_tree(encoded_name, default_branch)
+            blobs, tree_truncated = self._fetch_tree(
+                encoded_name, commit_sha or default_branch
+            )
         if scope_path is not None:
             blobs = _scope_tree_blobs(blobs, scope_path)
             if not blobs and not tree_truncated:
@@ -322,6 +345,8 @@ class GitHubClient:
             inspected_files=inspected_files,
             inspection_truncated=inspection_truncated,
             scope_path=scope_path,
+            commit_sha=commit_sha,
+            readme_path=readme_path,
         )
         self._store_snapshot(cache_key, snapshot)
         return snapshot
@@ -353,41 +378,63 @@ class GitHubClient:
         self,
         encoded_name: str,
         *,
-        branch: str,
+        revision: str,
         scope_path: str | None,
-    ) -> str | None:
+    ) -> tuple[str | None, str | None]:
         endpoint = f"/repos/{encoded_name}/readme"
-        params = None
+        params = {"ref": revision}
         if scope_path is not None:
             endpoint = f"{endpoint}/{quote(scope_path, safe='/')}"
-            params = {"ref": branch}
         payload = self._get_json(
             endpoint,
             params=params,
             allow_not_found=True,
         )
         if payload is None:
-            return None
+            return None, None
         if not isinstance(payload, Mapping):
             raise GitHubAPIError("GitHub returned an unexpected README response.")
 
         content = payload.get("content")
         if not isinstance(content, str):
-            return None
+            return None, None
         try:
             compact_content = "".join(content.split())
-            return base64.b64decode(compact_content, validate=True).decode(
+            readme = base64.b64decode(compact_content, validate=True).decode(
                 "utf-8", errors="replace"
             )
         except (binascii.Error, ValueError, TypeError) as error:
             raise GitHubAPIError("GitHub returned invalid README content.") from error
+        path = _optional_string(payload.get("path"))
+        if path is not None and scope_path is not None:
+            path = path.removeprefix(f"{scope_path}/")
+        return readme, path or "README.md"
 
-    def _fetch_tree(
-        self, encoded_name: str, branch: str
-    ) -> tuple[tuple[_TreeBlob, ...], bool]:
+    def _fetch_revision_sha(self, encoded_name: str, branch: str) -> str:
+        """Resolve the moving default branch to one immutable commit SHA."""
         encoded_branch = quote(branch, safe="")
         payload = self._get_json(
-            f"/repos/{encoded_name}/git/trees/{encoded_branch}",
+            f"/repos/{encoded_name}/git/ref/heads/{encoded_branch}",
+            allow_not_found=True,
+            allow_conflict=True,
+        )
+        if payload is None:
+            raise GitHubAPIError(
+                "GitHub could not resolve the default branch to a stable revision."
+            )
+        if not isinstance(payload, Mapping):
+            raise GitHubAPIError("GitHub returned an unexpected branch response.")
+        target = payload.get("object")
+        if not isinstance(target, Mapping):
+            raise GitHubAPIError("GitHub branch data did not identify a revision.")
+        return _required_string(target, "sha")
+
+    def _fetch_tree(
+        self, encoded_name: str, revision: str
+    ) -> tuple[tuple[_TreeBlob, ...], bool]:
+        encoded_revision = quote(revision, safe="")
+        payload = self._get_json(
+            f"/repos/{encoded_name}/git/trees/{encoded_revision}",
             params={"recursive": "1"},
             allow_conflict=True,
         )
@@ -429,7 +476,11 @@ class GitHubClient:
 
         inspected: list[RepositoryTextFile] = []
         for blob in fetchable:
-            content = self._fetch_blob_text(encoded_name, blob.sha)
+            try:
+                content = self._fetch_blob_text(encoded_name, blob.sha)
+            except (GitHubAPIError, RateLimitError):
+                truncated = True
+                break
             if content is None:
                 truncated = True
                 continue
@@ -439,13 +490,11 @@ class GitHubClient:
     def _fetch_blob_text(self, encoded_name: str, sha: str) -> str | None:
         """Return one UTF-8 Git blob, or ``None`` when optional evidence is unusable."""
         encoded_sha = quote(sha, safe="")
-        try:
-            payload = self._get_json(
-                f"/repos/{encoded_name}/git/blobs/{encoded_sha}",
-                allow_not_found=True,
-            )
-        except GitHubAPIError:
-            return None
+        payload = self._get_json(
+            f"/repos/{encoded_name}/git/blobs/{encoded_sha}",
+            allow_not_found=True,
+            timeout=self._optional_timeout,
+        )
         if not isinstance(payload, Mapping) or payload.get("encoding") != "base64":
             return None
         content = payload.get("content")
@@ -469,9 +518,10 @@ class GitHubClient:
         params: Mapping[str, str] | None = None,
         allow_not_found: bool = False,
         allow_conflict: bool = False,
+        timeout: float | None = None,
     ) -> Any:
         url = f"{GITHUB_API_URL}{path}"
-        response = self._request_with_retry(url, params=params)
+        response = self._request_with_retry(url, params=params, timeout=timeout)
 
         if response.status_code == 404:
             if allow_not_found:
@@ -483,7 +533,7 @@ class GitHubClient:
             return None
         if response.status_code == 401:
             raise AuthenticationError(
-                "GitHub rejected the token. Remove it or provide a valid token."
+                "GitHub rejected the configured token. Replace it or use public access."
             )
         if response.status_code in {403, 429} and (
             response.status_code == 429
@@ -510,7 +560,11 @@ class GitHubClient:
             raise GitHubAPIError("GitHub returned an unreadable response.") from error
 
     def _request_with_retry(
-        self, url: str, *, params: Mapping[str, str] | None
+        self,
+        url: str,
+        *,
+        params: Mapping[str, str] | None,
+        timeout: float | None,
     ) -> requests.Response:
         """Make one GET and retry once only for transient transport/server failures."""
         last_error: requests.RequestException | None = None
@@ -520,7 +574,7 @@ class GitHubClient:
                     url,
                     headers=self._headers,
                     params=params,
-                    timeout=self._timeout,
+                    timeout=self._timeout if timeout is None else timeout,
                 )
             except requests.RequestException as error:
                 last_error = error

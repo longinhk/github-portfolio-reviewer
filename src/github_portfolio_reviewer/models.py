@@ -150,6 +150,8 @@ class RepositorySnapshot:
     inspected_files: tuple[RepositoryTextFile, ...] = ()
     inspection_truncated: bool = False
     scope_path: str | None = None
+    commit_sha: str | None = None
+    readme_path: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -231,6 +233,21 @@ class ReviewReport:
         if self.rubric_assessment.fit == RubricFit.LOW:
             return None
         return self.score
+
+    @property
+    def score_is_provisional(self) -> bool:
+        """Return whether any scored finding relies on incomplete evidence."""
+        return self.presentation_score is not None and any(
+            check.confidence != EvidenceConfidence.VERIFIED for check in self.checks
+        )
+
+    @property
+    def evidence_counts(self) -> dict[EvidenceConfidence, int]:
+        """Count findings by evidence confidence, including empty groups."""
+        return {
+            confidence: sum(check.confidence == confidence for check in self.checks)
+            for confidence in EvidenceConfidence
+        }
 
     @property
     def category_scores(self) -> tuple[CategoryScore, ...]:

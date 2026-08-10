@@ -178,3 +178,42 @@ def test_truncated_tree_never_produces_a_low_fit_classification(
     assert assessment.repository_kind == RepositoryKind.UNKNOWN
     assert assessment.fit == RubricFit.MEDIUM
     assert "truncated" in assessment.explanation.casefold()
+
+
+def test_sample_manifests_without_local_source_do_not_create_a_monorepo(
+    make_snapshot: Callable[..., RepositorySnapshot],
+) -> None:
+    assessment = assess_rubric_fit(
+        make_snapshot(
+            files=(
+                "pyproject.toml",
+                "src/project/app.py",
+                "samples/widget/package.json",
+                "demo/service/pyproject.toml",
+            )
+        )
+    )
+
+    assert assessment.repository_kind == RepositoryKind.SOFTWARE
+    assert assessment.fit == RubricFit.HIGH
+
+
+def test_content_term_substrings_do_not_trigger_content_classification(
+    make_snapshot: Callable[..., RepositorySnapshot],
+) -> None:
+    assessment = assess_rubric_fit(
+        make_snapshot(
+            reference=RepositoryReference("example", "notebook-api"),
+            description="A notebook-compatible software service",
+            files=(
+                "pyproject.toml",
+                "src/api.py",
+                "docs/one.md",
+                "docs/two.md",
+                "docs/three.md",
+            ),
+        )
+    )
+
+    assert assessment.repository_kind == RepositoryKind.SOFTWARE
+    assert assessment.fit == RubricFit.HIGH

@@ -162,6 +162,7 @@ def analyze_repository(snapshot: RepositorySnapshot) -> tuple[AnalysisFinding, .
         _normalize_path(file.path): file.content for file in snapshot.inspected_files
     }
     readme = snapshot.readme or ""
+    readme_source = snapshot.readme_path or "README.md"
     production_files = _production_source_files(paths)
 
     findings = (
@@ -169,22 +170,24 @@ def analyze_repository(snapshot: RepositorySnapshot) -> tuple[AnalysisFinding, .
         _topics_finding(snapshot),
         _license_finding(snapshot, paths),
         _active_finding(snapshot),
-        _readme_exists_finding(readme),
-        _readme_detail_finding(readme),
+        _readme_exists_finding(readme, readme_source),
+        _readme_detail_finding(readme, readme_source),
         _readme_section_finding(
             CheckId.README_INSTALLATION,
             readme,
             ("installation", "install", "setup", "prerequisites", "getting started"),
             "installation or setup",
+            readme_source,
         ),
         _readme_section_finding(
             CheckId.README_USAGE,
             readme,
             ("usage", "how to use", "quickstart", "example", "examples"),
             "usage or examples",
+            readme_source,
         ),
-        _readme_badges_finding(readme),
-        _readme_visuals_finding(readme),
+        _readme_badges_finding(readme, readme_source),
+        _readme_visuals_finding(readme, readme_source),
         _source_layout_finding(snapshot, production_files),
         _manifest_finding(snapshot, paths),
         _path_presence_finding(
@@ -199,12 +202,12 @@ def analyze_repository(snapshot: RepositorySnapshot) -> tuple[AnalysisFinding, .
         _test_files_finding(snapshot, paths),
         _test_quality_finding(snapshot, paths, inspected),
         _test_configuration_finding(snapshot, paths, inspected),
-        _coverage_finding(snapshot, paths, inspected, readme),
-        _ci_workflow_finding(snapshot, paths),
+        _coverage_finding(snapshot, paths, inspected, readme, readme_source),
+        _ci_workflow_finding(snapshot, paths, inspected),
         _actions_pinned_finding(snapshot, paths, inspected),
         _workflow_permissions_finding(snapshot, paths, inspected),
-        _ci_badge_finding(readme),
-        _docs_finding(snapshot, paths, readme),
+        _ci_badge_finding(readme, readme_source),
+        _docs_finding(snapshot, paths, readme, readme_source),
         _governance_file_finding(
             snapshot,
             paths,
@@ -302,22 +305,28 @@ def _active_finding(snapshot: RepositorySnapshot) -> AnalysisFinding:
     return _finding(CheckId.ACTIVE, CheckStatus.PASS, "Repository is not archived.")
 
 
-def _readme_exists_finding(readme: str) -> AnalysisFinding:
+def _readme_exists_finding(readme: str, source: str) -> AnalysisFinding:
     if readme.strip():
         return _finding(
             CheckId.README_EXISTS,
             CheckStatus.PASS,
             "README detected.",
-            sources=("README.md",),
+            sources=(source,),
         )
     return _finding(CheckId.README_EXISTS, CheckStatus.FAIL, "No README detected.")
 
 
-def _readme_detail_finding(readme: str) -> AnalysisFinding:
-    word_count = len(re.findall(r"\b[\w'-]+\b", readme))
-    if word_count >= 200:
+def _readme_detail_finding(readme: str, source: str) -> AnalysisFinding:
+    prose = re.sub(r"(?s)```.*?```|~~~.*?~~~", " ", readme)
+    words = re.findall(r"\b[\w'-]+\b", prose)
+    word_count = len(words)
+    unique_words = len({word.casefold() for word in words})
+    sufficiently_varied = unique_words >= 40 or (
+        word_count > 0 and unique_words / word_count >= 0.2
+    )
+    if word_count >= 200 and sufficiently_varied:
         status = CheckStatus.PASS
-    elif word_count >= 50:
+    elif word_count >= 50 and unique_words >= 15:
         status = CheckStatus.PARTIAL
     else:
         status = CheckStatus.FAIL
@@ -325,7 +334,7 @@ def _readme_detail_finding(readme: str) -> AnalysisFinding:
         CheckId.README_DETAIL,
         status,
         f"README contains approximately {word_count} words.",
-        sources=("README.md",) if readme else (),
+        sources=(source,) if readme else (),
     )
 
 
@@ -334,17 +343,31 @@ def _readme_section_finding(
     readme: str,
     terms: tuple[str, ...],
     label: str,
+    source: str,
 ) -> AnalysisFinding:
     headings = [
         match.casefold()
         for match in re.findall(r"(?m)^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$", readme)
     ]
-    if any(term in heading for heading in headings for term in terms):
+    matching_heading = next(
+        (heading for heading in headings if any(term in heading for term in terms)),
+        None,
+    )
+    if matching_heading is not None and _readme_section_has_content(
+        readme, matching_heading
+    ):
         return _finding(
             check_id,
             CheckStatus.PASS,
             f"Found a {label} heading.",
-            sources=("README.md",),
+            sources=(source,),
+        )
+    if matching_heading is not None:
+        return _finding(
+            check_id,
+            CheckStatus.PARTIAL,
+            f"README has a {label} heading, but the section contains little guidance.",
+            sources=(source,),
         )
     lowered = readme.casefold()
     if lowered and any(term in lowered for term in terms):
@@ -352,9 +375,24 @@ def _readme_section_finding(
             check_id,
             CheckStatus.PARTIAL,
             f"README mentions {label}, but has no clearly named section.",
-            sources=("README.md",),
+            sources=(source,),
         )
     return _finding(check_id, CheckStatus.FAIL, f"README has no {label} guidance.")
+
+
+def _readme_section_has_content(readme: str, heading: str) -> bool:
+    """Return whether a named Markdown section contains useful body content."""
+    pattern = re.compile(
+        rf"(?ims)^\s{{0,3}}#{{1,6}}\s+{re.escape(heading)}\s*#*\s*$"
+        r"(?P<body>.*?)(?=^\s{0,3}#{1,6}\s+|\Z)"
+    )
+    match = pattern.search(readme)
+    if match is None:
+        return False
+    body = match.group("body")
+    words = re.findall(r"\b[\w'-]+\b", body)
+    has_command = bool(re.search(r"(?m)^\s*(?:```|~~~|\$\s|pip\s|python\s)", body))
+    return len(words) >= 5 or has_command
 
 
 def _image_targets(readme: str) -> tuple[str, ...]:
@@ -363,7 +401,7 @@ def _image_targets(readme: str) -> tuple[str, ...]:
     return tuple(markdown + html)
 
 
-def _readme_badges_finding(readme: str) -> AnalysisFinding:
+def _readme_badges_finding(readme: str, source: str) -> AnalysisFinding:
     targets = _image_targets(readme)
     badge_terms = ("shields.io", "badge.svg", "codecov", "coveralls")
     badges = [
@@ -378,11 +416,11 @@ def _readme_badges_finding(readme: str) -> AnalysisFinding:
         f"Found {len(badges)} status badge image(s)."
         if badges
         else "No status badges found.",
-        sources=("README.md",) if readme else (),
+        sources=(source,) if readme else (),
     )
 
 
-def _readme_visuals_finding(readme: str) -> AnalysisFinding:
+def _readme_visuals_finding(readme: str, source: str) -> AnalysisFinding:
     targets = _image_targets(readme)
     badge_terms = ("shields.io", "badge.svg", "codecov", "coveralls")
     visuals = [
@@ -397,7 +435,7 @@ def _readme_visuals_finding(readme: str) -> AnalysisFinding:
         f"Found {len(visuals)} non-badge visual(s)."
         if visuals
         else "No screenshots, diagrams, or demo visuals found.",
-        sources=("README.md",) if readme else (),
+        sources=(source,) if readme else (),
     )
 
 
@@ -601,15 +639,17 @@ def _test_quality_finding(
 
     test_cases = 0
     assertion_signals = 0
+    assertion_bearing_cases = 0
     parse_errors = 0
     for path, content in sampled:
-        cases, assertions, parsed = _test_metrics(path, content)
+        cases, assertions, asserted_cases, parsed = _test_metrics(path, content)
         test_cases += cases
         assertion_signals += assertions
+        assertion_bearing_cases += asserted_cases
         parse_errors += not parsed
 
     incomplete = len(sampled) < len(test_paths)
-    if test_cases >= 2 and assertion_signals >= 1:
+    if test_cases >= 2 and assertion_bearing_cases >= 2:
         status = CheckStatus.PASS
     elif test_cases or assertion_signals or parse_errors or incomplete:
         status = CheckStatus.PARTIAL
@@ -618,7 +658,8 @@ def _test_quality_finding(
 
     evidence = (
         f"Sampled {len(sampled)} of {len(test_paths)} test file(s); found "
-        f"{test_cases} implemented test case(s) and {assertion_signals} assertion signal(s)."
+        f"{test_cases} implemented test case(s), {assertion_bearing_cases} with "
+        f"assertion evidence, and {assertion_signals} assertion signal(s)."
     )
     if parse_errors:
         evidence += f" {parse_errors} sampled file(s) could not be parsed safely."
@@ -637,13 +678,13 @@ def _test_quality_finding(
     )
 
 
-def _test_metrics(path: str, content: str) -> tuple[int, int, bool]:
-    """Return deterministic test-case and assertion counts for sampled text."""
+def _test_metrics(path: str, content: str) -> tuple[int, int, int, bool]:
+    """Return deterministic test and assertion metrics for sampled text."""
     if PurePosixPath(path).suffix == ".py":
         try:
             tree = ast.parse(content)
         except (SyntaxError, ValueError):
-            return 0, 0, False
+            return 0, 0, 0, False
 
         test_nodes = [
             node
@@ -651,13 +692,20 @@ def _test_metrics(path: str, content: str) -> tuple[int, int, bool]:
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
             and node.name.startswith("test_")
         ]
-        implemented = sum(not _is_placeholder_test(node) for node in test_nodes)
+        implemented_nodes = [
+            node for node in test_nodes if not _is_placeholder_test(node)
+        ]
+        implemented = len(implemented_nodes)
         assertions = sum(_is_assertion_signal(node) for node in ast.walk(tree))
-        return implemented, assertions, True
+        asserted_cases = sum(
+            any(_is_assertion_signal(child) for child in ast.walk(node))
+            for node in implemented_nodes
+        )
+        return implemented, assertions, asserted_cases, True
 
     test_cases = len(re.findall(r"(?m)\b(?:it|test)\s*\(", content))
     assertions = len(re.findall(r"(?m)\b(?:expect|assert)\s*\(?", content))
-    return test_cases, assertions, True
+    return test_cases, assertions, min(test_cases, assertions), True
 
 
 def _is_placeholder_test(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
@@ -789,6 +837,7 @@ def _coverage_finding(
     paths: tuple[str, ...],
     inspected: dict[str, str],
     readme: str,
+    readme_source: str,
 ) -> AnalysisFinding:
     candidates = [
         path
@@ -813,7 +862,7 @@ def _coverage_finding(
             CheckId.COVERAGE,
             CheckStatus.PARTIAL,
             "README mentions coverage, but no dedicated configuration file was detected.",
-            sources=("README.md",),
+            sources=(readme_source,),
         )
     dedicated = [
         path for path in candidates if PurePosixPath(path).name in COVERAGE_FILES
@@ -873,14 +922,38 @@ def _has_coverage_configuration(path: str, content: str) -> bool:
 
 
 def _ci_workflow_finding(
-    snapshot: RepositorySnapshot, paths: tuple[str, ...]
+    snapshot: RepositorySnapshot,
+    paths: tuple[str, ...],
+    inspected: dict[str, str],
 ) -> AnalysisFinding:
-    ci_file = next((path for path in paths if _is_ci_file(path)), None)
+    ci_files = tuple(path for path in paths if _is_ci_file(path))
+    ci_file = next(
+        (path for path in ci_files if path in inspected),
+        ci_files[0] if ci_files else None,
+    )
     if ci_file:
+        content = inspected.get(ci_file)
+        if content is None:
+            return _finding(
+                CheckId.CI_WORKFLOW,
+                CheckStatus.PARTIAL,
+                f"Detected CI configuration at {ci_file}, but its contents were not inspected.",
+                sources=(ci_file,),
+                confidence=EvidenceConfidence.UNVERIFIED,
+            )
+        configured = bool(
+            re.search(r"(?m)^\s*['\"]?(?:on|trigger)['\"]?\s*:", content)
+            and re.search(r"(?m)^\s*(?:jobs|stages)\s*:", content)
+            and re.search(r"(?m)^\s*-?\s*(?:uses|run|script)\s*:", content)
+        )
         return _finding(
             CheckId.CI_WORKFLOW,
-            CheckStatus.PASS,
-            f"Detected CI configuration at {ci_file}; execution status was not verified.",
+            CheckStatus.PASS if configured else CheckStatus.PARTIAL,
+            (
+                f"Verified executable CI structure in {ci_file}; execution status was not checked."
+                if configured
+                else f"{ci_file} exists but lacks a recognizable trigger, job, or execution step."
+            ),
             sources=(ci_file,),
         )
     return _missing_path_finding(
@@ -1065,7 +1138,7 @@ def _workflow_permissions_status(content: str) -> CheckStatus | None:
     return CheckStatus.PARTIAL if saw_write else CheckStatus.PASS
 
 
-def _ci_badge_finding(readme: str) -> AnalysisFinding:
+def _ci_badge_finding(readme: str, source: str) -> AnalysisFinding:
     targets = _image_targets(readme)
     ci_terms = ("actions/workflows", "circleci", "travis", "azure", "buildkite")
     found = any(
@@ -1075,12 +1148,15 @@ def _ci_badge_finding(readme: str) -> AnalysisFinding:
         CheckId.CI_BADGE,
         CheckStatus.PASS if found else CheckStatus.FAIL,
         "README displays a CI status badge." if found else "No CI status badge found.",
-        sources=("README.md",) if readme else (),
+        sources=(source,) if readme else (),
     )
 
 
 def _docs_finding(
-    snapshot: RepositorySnapshot, paths: tuple[str, ...], readme: str
+    snapshot: RepositorySnapshot,
+    paths: tuple[str, ...],
+    readme: str,
+    readme_source: str,
 ) -> AnalysisFinding:
     doc_files = [
         path
@@ -1109,7 +1185,7 @@ def _docs_finding(
             CheckId.DOCS,
             CheckStatus.PARTIAL,
             "README links to external documentation, but that content was not inspected.",
-            sources=("README.md",),
+            sources=(readme_source,),
             confidence=EvidenceConfidence.UNVERIFIED,
         )
     if re.search(r"(?im)^\s{0,3}#{1,6}\s+documentation\b", readme):
@@ -1117,7 +1193,7 @@ def _docs_finding(
             CheckId.DOCS,
             CheckStatus.PARTIAL,
             "Documentation is included in the README but has no dedicated directory.",
-            sources=("README.md",),
+            sources=(readme_source,),
         )
     return _missing_path_finding(
         snapshot, CheckId.DOCS, "No extended documentation detected outside the README."
@@ -1423,8 +1499,8 @@ def _detected_secrets_finding(snapshot: RepositorySnapshot) -> AnalysisFinding:
         )
     return _finding(
         CheckId.NO_DETECTED_SECRETS,
-        CheckStatus.PASS,
-        f"No high-confidence credential pattern appeared in {len(sampled)} inspected text file(s). This is not a full secret scan.",
+        CheckStatus.PARTIAL,
+        f"No high-confidence credential pattern appeared in the bounded sample of {len(sampled)} text file(s). Uninspected files and Git history remain unknown.",
         sources=tuple(file.path for file in sampled[:5]),
         confidence=EvidenceConfidence.SAMPLED,
     )

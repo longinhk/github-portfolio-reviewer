@@ -21,10 +21,11 @@ Application service (service.py)
 ## Module responsibilities
 
 - `models.py` defines immutable data exchanged between layers.
-- `github_client.py` validates and normalizes repository input, then converts
-  GitHub JSON into a typed `RepositorySnapshot`. It also owns bounded retries,
-  caching, optional default-branch subdirectory scoping, and bucketed text-file
-  sampling. Raw dictionaries do not escape this adapter.
+- `github_client.py` validates and normalizes repository input, resolves one
+  immutable default-branch commit, then converts GitHub JSON into a typed
+  `RepositorySnapshot`. It also owns bounded retries, caching, optional
+  default-branch subdirectory scoping, and bucketed text-file sampling. Raw
+  dictionaries do not escape this adapter.
 - `analyzer.py` applies deterministic checks to README text, metadata, file
   paths, and selected text evidence. It performs no HTTP requests and never
   executes repository code.
@@ -51,10 +52,10 @@ Keeping one comparable rubric avoids hidden score changes between focuses.
 
 ### Applicability gate
 
-Ruleset 1.3 keeps one software-project rubric rather than inventing separate
-scores for every repository purpose. Deterministic path, manifest, source, test,
-content-file, name, description, and topic signals produce a repository type and
-rubric fit:
+The applicability gate introduced in Ruleset 1.3 keeps one software-project
+rubric rather than inventing separate scores for every repository purpose.
+Deterministic path, manifest, source, test, content-file, name, description, and
+topic signals produce a repository type and rubric fit:
 
 - conventional software projects have high fit and receive a numeric score;
 - monorepos and ambiguous layouts have medium fit, retain a whole-repository
@@ -73,8 +74,9 @@ rather than being confidently misclassified.
 
 ### Bounded, category-reserved content inspection
 
-A review requests repository metadata, the preferred README, and the recursive
-Git tree. It may then fetch at most ten small, allow-listed text files. Ruleset
+A review requests repository metadata, resolves the default-branch revision,
+then requests the preferred README and recursive Git tree at that commit. It may
+then fetch at most ten small, allow-listed text files. Ruleset
 1.2 reserves fixed slots for one security policy, one dependency updater, one
 `pyproject.toml`, one explicit test configuration, one coverage configuration,
 two GitHub workflows, and three test sources. Paths are sorted deterministically
@@ -120,10 +122,13 @@ Scoped reports intentionally retain parent-repository metadata while limiting
 README and file-based checks to the selected folder. Root and scoped snapshots
 use separate cache entries.
 
-### Immutable snapshot
+### Commit-pinned immutable snapshot
 
-All checks analyze the same evidence snapshot. This avoids one check observing a
-different repository state from another and makes the core rules easy to test.
+For non-empty repositories, all README, tree, and blob evidence is tied to one
+resolved commit SHA, and every check analyzes the same immutable snapshot. The
+SHA is displayed, exported, and used for evidence links. Repository-level
+popularity and description metadata can still change independently because
+GitHub does not version those settings.
 
 ### Heuristics stay visible
 
@@ -131,19 +136,32 @@ Each check returns a status and evidence. Scoring is a separate mapping, so a
 weight change cannot silently alter detection behavior. The UI presents both
 instead of hiding them behind one number.
 
-### Small session-local cache
+### Small process-wide cache
 
-The Streamlit session reuses a GitHub client, which caches a bounded number of
-repository snapshots for five minutes. The cache belongs to that browser
-session. Changing the optional GitHub token creates a new client, and only a
-one-way token fingerprint is retained for comparison.
+Streamlit reuses one locked GitHub client for the configured deployment access
+mode. Its bounded cache keeps up to 32 immutable repository snapshots for five
+minutes and is shared across browser sessions. This reduces repeated API calls
+without adding Redis, a database, accounts, or persistent user data. Public
+visitors never enter a personal token; an optional maintainer token is loaded
+only from Streamlit Secrets.
 
 ### Bounded automatic retries
 
-Temporary connection failures and GitHub `502`, `503`, or `504` responses are
-retried once with a short delay. Authentication failures, missing repositories,
-and rate limits are never retried automatically because doing so could worsen
-the problem or hide a permanent error.
+Temporary connection failures and GitHub `500`, `502`, `503`, or `504`
+responses are retried once with a short delay. Authentication failures, missing
+repositories, and rate limits are never retried automatically because doing so
+could worsen the problem or hide a permanent error. Optional blob requests use
+a shorter timeout, and remaining optional inspection stops after a repeated
+transport failure so a degraded connection cannot hold the report open for
+minutes.
+
+### Provisional score semantics
+
+Pass, partial, and fail still determine the transparent 100-point rubric. The
+report separately counts verified, sampled, unverified, and provisional
+evidence. Any incomplete evidence labels the displayed and exported score
+provisional. A clean bounded credential sample receives partial rather than full
+credit because uninspected files and Git history remain unknown.
 
 ### Truncated trees are incomplete evidence
 

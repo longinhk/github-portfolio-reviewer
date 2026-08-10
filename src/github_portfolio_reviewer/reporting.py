@@ -2,13 +2,14 @@
 
 import json
 from datetime import datetime
+from html import escape
 from typing import Any
 
 from github_portfolio_reviewer.models import ReviewReport, Suggestion
 from github_portfolio_reviewer.scoring import score_band
 from github_portfolio_reviewer.suggestions import generate_suggestions
 
-EXPORT_SCHEMA_VERSION = "1.3"
+EXPORT_SCHEMA_VERSION = "1.4"
 
 
 def report_to_dict(report: ReviewReport) -> dict[str, Any]:
@@ -25,6 +26,7 @@ def report_to_dict(report: ReviewReport) -> dict[str, Any]:
         if suggestion.check_id is not None
     }
     presentation_score = report.presentation_score
+    evidence_counts = report.evidence_counts
     return {
         "schema_version": EXPORT_SCHEMA_VERSION,
         "ruleset_version": report.ruleset_version,
@@ -65,6 +67,8 @@ def report_to_dict(report: ReviewReport) -> dict[str, Any]:
             "fork": repository.fork,
             "created_at": _isoformat(repository.created_at),
             "pushed_at": _isoformat(repository.pushed_at),
+            "commit_sha": repository.commit_sha,
+            "readme_path": repository.readme_path,
             "tree_truncated": repository.tree_truncated,
             "inspection_truncated": repository.inspection_truncated,
         },
@@ -77,6 +81,11 @@ def report_to_dict(report: ReviewReport) -> dict[str, Any]:
                 if presentation_score is not None
                 else "Not scored"
             ),
+            "provisional": report.score_is_provisional,
+            "evidence_counts": {
+                confidence.value: evidence_counts[confidence]
+                for confidence in evidence_counts
+            },
         },
         "categories": [
             {
@@ -170,6 +179,7 @@ def render_markdown_report(report: ReviewReport) -> str:
         "| --- | --- |",
         _table_row("Description", repository["description"] or "Not provided"),
         _table_row("Default branch", repository["default_branch"]),
+        _table_row("Reviewed revision", repository["commit_sha"] or "Unknown"),
         _table_row("Language", repository["language"] or "Unknown"),
         _table_row("Topics", ", ".join(repository["topics"]) or "None"),
         _table_row("License", repository["license"] or "Not detected"),
@@ -178,6 +188,10 @@ def render_markdown_report(report: ReviewReport) -> str:
         _table_row("Open issues", repository["open_issues"]),
         _table_row("Created", repository["created_at"] or "Unknown"),
         _table_row("Last pushed", repository["pushed_at"] or "Unknown"),
+        _table_row(
+            "Score evidence",
+            "Provisional" if score["provisional"] else "Verified",
+        ),
         _table_row("Archived", _yes_no(repository["archived"])),
         _table_row("Fork", _yes_no(repository["fork"])),
         "",
@@ -348,4 +362,5 @@ def _markdown_cell(value: object) -> str:
 
 
 def _markdown_text(value: object) -> str:
-    return str(value).replace("\r\n", "\n").replace("\r", "\n").replace("\n", "<br>")
+    normalized = str(value).replace("\r\n", "\n").replace("\r", "\n")
+    return escape(normalized, quote=False).replace("\n", "<br>")

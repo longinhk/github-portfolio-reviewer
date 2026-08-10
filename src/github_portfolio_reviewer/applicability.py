@@ -1,5 +1,6 @@
 """Classify whether the software-project rubric fits repository evidence."""
 
+import re
 from pathlib import PurePosixPath
 
 from github_portfolio_reviewer.models import (
@@ -43,6 +44,7 @@ CODE_SUFFIXES = {
     ".swift",
     ".ts",
     ".tsx",
+    ".ipynb",
 }
 CONTENT_SUFFIXES = {".adoc", ".ipynb", ".md", ".mdx", ".pdf", ".ppt", ".pptx", ".rst"}
 CONTENT_TERMS = {
@@ -69,6 +71,13 @@ SUPPORT_DIRECTORIES = {
     "documentation",
     "example",
     "examples",
+    "sample",
+    "samples",
+    "demo",
+    "demos",
+    "build",
+    "dist",
+    "node_modules",
     "fixture",
     "fixtures",
     "test",
@@ -98,7 +107,7 @@ def assess_rubric_fit(snapshot: RepositorySnapshot) -> RubricAssessment:
         for path in pure_paths
         if len(path.parts) == 1 and path.name in MANIFEST_NAMES
     )
-    project_roots = {
+    manifest_roots = {
         "." if len(path.parts) == 1 else path.parent.as_posix()
         for path in pure_paths
         if path.name in MANIFEST_NAMES
@@ -107,6 +116,11 @@ def assess_rubric_fit(snapshot: RepositorySnapshot) -> RubricAssessment:
     test_files = tuple(path for path in pure_paths if _is_test_file(path))
     source_files = tuple(path for path in pure_paths if _is_source_file(path))
     content_files = tuple(path for path in pure_paths if _is_content_file(path))
+    project_roots = {
+        root
+        for root in manifest_roots
+        if root == "." or any(_path_is_below(source, root) for source in source_files)
+    }
 
     descriptor = " ".join(
         (
@@ -115,7 +129,11 @@ def assess_rubric_fit(snapshot: RepositorySnapshot) -> RubricAssessment:
             " ".join(topic.casefold() for topic in snapshot.topics),
         )
     )
-    content_hint = any(term in descriptor for term in CONTENT_TERMS)
+    normalized_descriptor = " ".join(re.findall(r"[a-z0-9]+", descriptor))
+    content_hint = any(
+        re.search(rf"(?:^| ){re.escape(term)}(?: |$)", normalized_descriptor)
+        for term in CONTENT_TERMS
+    )
     content_dominant = len(content_files) >= max(3, len(source_files) * 3)
 
     if content_hint and content_dominant and len(test_files) == 0:
@@ -206,3 +224,8 @@ def _is_source_file(path: PurePosixPath) -> bool:
 def _is_content_file(path: PurePosixPath) -> bool:
     """Return whether a path is primarily documentation, learning, or reference content."""
     return path.suffix in CONTENT_SUFFIXES or path.name == "skill.md"
+
+
+def _path_is_below(path: PurePosixPath, root: str) -> bool:
+    """Return whether a source path belongs to a manifest-backed project root."""
+    return path.as_posix().startswith(f"{root}/")

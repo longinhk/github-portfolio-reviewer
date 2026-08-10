@@ -52,6 +52,8 @@ def _make_report() -> ReviewReport:
             ),
         ),
         inspection_truncated=False,
+        commit_sha="a" * 40,
+        readme_path="README.rst",
     )
     checks = (
         ScoredCheck(
@@ -108,7 +110,7 @@ def test_json_report_has_stable_explicit_schema() -> None:
         "checks",
         "suggestions",
     ]
-    assert data["schema_version"] == "1.3"
+    assert data["schema_version"] == "1.4"
     assert data["ruleset_version"] == "2.1.0"
     assert data["review_mode"] == "Python internship"
     assert data["score"] == {
@@ -116,6 +118,13 @@ def test_json_report_has_stable_explicit_schema() -> None:
         "points": 5,
         "max_points": 100,
         "band": "Early stage",
+        "provisional": True,
+        "evidence_counts": {
+            "verified": 1,
+            "sampled": 1,
+            "unverified": 0,
+            "provisional": 0,
+        },
     }
     assert data["rubric_assessment"] == {
         "repository_type": "Unknown repository type",
@@ -135,6 +144,8 @@ def test_json_report_has_stable_explicit_schema() -> None:
         "required_paid_services": False,
     }
     assert data["repository"]["created_at"] == "2025-01-02T03:04:00+00:00"
+    assert data["repository"]["commit_sha"] == "a" * 40
+    assert data["repository"]["readme_path"] == "README.rst"
     assert data["checks"][0]["confidence"] == "verified"
     assert data["checks"][1]["confidence"] == "sampled"
     assert data["checks"][1]["recommendation_kind"] == "Manual review"
@@ -200,6 +211,13 @@ def test_low_fit_report_withholds_numeric_score_and_recommendations() -> None:
         "points": None,
         "max_points": None,
         "band": "Not scored",
+        "provisional": False,
+        "evidence_counts": {
+            "verified": 1,
+            "sampled": 1,
+            "unverified": 0,
+            "provisional": 0,
+        },
     }
     assert data["suggestions"] == []
     assert all(check["recommendation"] is None for check in data["checks"])
@@ -234,3 +252,19 @@ def test_markdown_table_rows_never_contain_unescaped_content_newlines() -> None:
     assert "<br>" in check_row
     assert " | no output" not in check_row
     assert " | docs/usage.md" not in check_row
+
+
+def test_markdown_export_escapes_repository_controlled_html() -> None:
+    report = _make_report()
+    report = replace(
+        report,
+        repository=replace(
+            report.repository,
+            description='<img src=x onerror="alert(1)">',
+        ),
+    )
+
+    markdown = render_markdown_report(report)
+
+    assert "<img" not in markdown
+    assert "&lt;img src=x onerror=" in markdown
