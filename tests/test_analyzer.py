@@ -2,6 +2,8 @@
 
 from collections.abc import Callable
 
+import pytest
+
 from github_portfolio_reviewer.analyzer import analyze_repository
 from github_portfolio_reviewer.models import (
     CheckId,
@@ -311,6 +313,21 @@ def test_readme_section_keywords_without_headings_receive_partial_credit(
     assert statuses[CheckId.README_DETAIL] == CheckStatus.FAIL
 
 
+def test_readme_section_content_matching_is_case_insensitive(
+    make_snapshot: Callable[..., RepositorySnapshot],
+) -> None:
+    statuses = _statuses(
+        make_snapshot(
+            readme=(
+                "# Project\n\n## InStAlLaTiOn\n\n"
+                "Use pip install to set up the project locally."
+            )
+        )
+    )
+
+    assert statuses[CheckId.README_INSTALLATION] == CheckStatus.PASS
+
+
 def test_readme_sources_keep_the_actual_github_path(
     make_snapshot: Callable[..., RepositorySnapshot],
 ) -> None:
@@ -511,6 +528,115 @@ def test_ci_check_prefers_an_inspected_workflow_over_an_uninspected_provider(
     )
 
     assert statuses[CheckId.CI_WORKFLOW] == CheckStatus.PASS
+
+
+@pytest.mark.parametrize(
+    ("path", "valid_content"),
+    [
+        (
+            ".circleci/config.yml",
+            "version: 2.1\njobs:\n  test:\n    steps:\n      - run: pytest\n",
+        ),
+        (".travis.yml", "language: python\nscript: pytest\n"),
+        (".gitlab-ci.yml", "test-job:\n  script:\n    - pytest\n"),
+        (
+            "azure-pipelines.yml",
+            "trigger:\n  - main\npool:\n  vmImage: ubuntu-latest\n"
+            "steps:\n  - script: pytest\n",
+        ),
+        (
+            "azure-pipelines.yml",
+            "steps:\n  - pwsh: Invoke-Pester\n",
+        ),
+        (
+            "jenkinsfile",
+            "pipeline {\n  agent any\n  stages {\n    stage('Test') {\n      steps {\n"
+            "        sh 'pytest'\n      }\n    }\n  }\n}\n",
+        ),
+        (
+            "jenkinsfile",
+            "node('linux') {\n  stage('Test') {\n    sh 'pytest'\n  }\n}\n",
+        ),
+    ],
+)
+def test_ci_structure_uses_provider_specific_evidence(
+    make_snapshot: Callable[..., RepositorySnapshot],
+    path: str,
+    valid_content: str,
+) -> None:
+    valid = _statuses(
+        make_snapshot(
+            files=(path,),
+            inspected_files=(_inspected(path, valid_content),),
+        )
+    )
+    malformed = _statuses(
+        make_snapshot(
+            files=(path,),
+            inspected_files=(_inspected(path, "# placeholder only\n"),),
+        )
+    )
+
+    assert valid[CheckId.CI_WORKFLOW] == CheckStatus.PASS
+    assert malformed[CheckId.CI_WORKFLOW] == CheckStatus.PARTIAL
+
+
+def test_ci_check_passes_when_any_inspected_configuration_is_executable(
+    make_snapshot: Callable[..., RepositorySnapshot],
+) -> None:
+    finding = next(
+        finding
+        for finding in analyze_repository(
+            make_snapshot(
+                files=(".circleci/config.yml", ".travis.yml"),
+                inspected_files=(
+                    _inspected(".circleci/config.yml", "# placeholder only\n"),
+                    _inspected(
+                        ".travis.yml",
+                        "language: python\nscript: pytest\n",
+                    ),
+                ),
+            )
+        )
+        if finding.check_id == CheckId.CI_WORKFLOW
+    )
+
+    assert finding.status == CheckStatus.PASS
+    assert finding.sources == (".travis.yml",)
+
+
+def test_jenkins_declarative_pipeline_requires_an_agent(
+    make_snapshot: Callable[..., RepositorySnapshot],
+) -> None:
+    statuses = _statuses(
+        make_snapshot(
+            files=("jenkinsfile",),
+            inspected_files=(
+                _inspected(
+                    "jenkinsfile",
+                    "pipeline {\n  stages {\n    stage('Test') {\n      steps {\n"
+                    "        sh 'pytest'\n      }\n    }\n  }\n}\n",
+                ),
+            ),
+        )
+    )
+
+    assert statuses[CheckId.CI_WORKFLOW] == CheckStatus.PARTIAL
+
+
+def test_non_github_ci_without_inspected_content_remains_unverified(
+    make_snapshot: Callable[..., RepositorySnapshot],
+) -> None:
+    finding = next(
+        finding
+        for finding in analyze_repository(
+            make_snapshot(files=(".circleci/config.yml",))
+        )
+        if finding.check_id == CheckId.CI_WORKFLOW
+    )
+
+    assert finding.status == CheckStatus.PARTIAL
+    assert finding.confidence == EvidenceConfidence.UNVERIFIED
 
 
 def test_security_and_dependabot_files_are_content_validated(

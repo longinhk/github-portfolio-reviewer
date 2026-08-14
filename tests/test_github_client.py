@@ -2,6 +2,8 @@
 
 import base64
 from collections.abc import Mapping
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier, Event
 from typing import Any
 
 import pytest
@@ -16,7 +18,7 @@ from github_portfolio_reviewer.github_client import (
     RepositoryNotFoundError,
     parse_repository_reference,
 )
-from github_portfolio_reviewer.models import RepositoryReference
+from github_portfolio_reviewer.models import RepositoryReference, RepositorySnapshot
 
 
 class FakeResponse:
@@ -112,6 +114,28 @@ def encoded_blob(content: str | bytes) -> FakeResponse:
             "encoding": "base64",
             "content": base64.b64encode(raw).decode(),
         },
+    )
+
+
+def empty_snapshot(reference: RepositoryReference) -> RepositorySnapshot:
+    """Return a compact snapshot for concurrency tests without HTTP."""
+    return RepositorySnapshot(
+        reference=reference,
+        html_url=f"https://github.com/{reference.full_name}",
+        description=None,
+        default_branch="main",
+        stars=0,
+        forks=0,
+        open_issues=0,
+        language=None,
+        topics=(),
+        license_name=None,
+        archived=False,
+        fork=False,
+        created_at=None,
+        pushed_at=None,
+        readme=None,
+        files=(),
     )
 
 
@@ -536,6 +560,40 @@ def test_inspection_fetches_renovate_when_dependabot_is_absent() -> None:
     assert snapshot.inspection_truncated is False
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        ".circleci/config.yml",
+        ".gitlab-ci.yml",
+        ".travis.yml",
+        "azure-pipelines.yml",
+        "Jenkinsfile",
+    ],
+)
+def test_inspection_fetches_each_supported_ci_provider(path: str) -> None:
+    session = FakeSession(
+        [
+            FakeResponse(200, repository_metadata()),
+            FakeResponse(404, {"message": "Not Found"}),
+            FakeResponse(
+                200,
+                {
+                    "tree": [tree_blob(path, "ci-config", 20)],
+                    "truncated": False,
+                },
+            ),
+            encoded_blob("provider configuration"),
+        ]
+    )
+
+    snapshot = GitHubClient(session=session).fetch_repository(  # type: ignore[arg-type]
+        parse_repository_reference("example/project")
+    )
+
+    assert tuple(file.path for file in snapshot.inspected_files) == (path,)
+    assert snapshot.inspection_truncated is False
+
+
 def test_inspection_skips_oversized_missing_and_binary_evidence() -> None:
     tree = [
         tree_blob(".github/dependabot.yml", "dependabot", 20),
@@ -675,6 +733,79 @@ def test_snapshot_cache_is_bounded_to_thirty_two_repositories() -> None:
     assert len(client._snapshot_cache) == 32
     assert "example/project-0" not in client._snapshot_cache
     assert "example/project-32" in client._snapshot_cache
+
+
+def test_different_repository_fetches_are_not_globally_serialized() -> None:
+    barrier = Barrier(2)
+
+    class ConcurrentClient(GitHubClient):
+        def _fetch_repository(
+            self,
+            reference: RepositoryReference,
+            *,
+            scope_to_linked_subdirectory: bool,
+        ) -> RepositorySnapshot:
+            barrier.wait(timeout=2)
+            return empty_snapshot(reference)
+
+    client = ConcurrentClient(cache_ttl=0)
+    references = (
+        RepositoryReference("example", "first"),
+        RepositoryReference("example", "second"),
+    )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        snapshots = tuple(executor.map(client.fetch_repository, references))
+
+    assert tuple(snapshot.reference for snapshot in snapshots) == references
+
+
+def test_same_repository_cold_fetches_are_coalesced() -> None:
+    started = Event()
+    release = Event()
+
+    class CoalescingClient(GitHubClient):
+        calls = 0
+
+        def _fetch_repository(
+            self,
+            reference: RepositoryReference,
+            *,
+            scope_to_linked_subdirectory: bool,
+        ) -> RepositorySnapshot:
+            self.calls += 1
+            started.set()
+            assert release.wait(timeout=2)
+            return empty_snapshot(reference)
+
+    client = CoalescingClient()
+    reference = RepositoryReference("example", "project")
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(client.fetch_repository, reference)
+        assert started.wait(timeout=2)
+        second = executor.submit(client.fetch_repository, reference)
+        release.set()
+        first_snapshot = first.result(timeout=2)
+        second_snapshot = second.result(timeout=2)
+
+    assert client.calls == 1
+    assert second_snapshot is first_snapshot
+    assert client._fetch_locks == {}
+
+
+def test_default_transport_uses_a_separate_session_per_worker_thread() -> None:
+    barrier = Barrier(2)
+    client = GitHubClient()
+
+    def session_identity(_: int) -> int:
+        barrier.wait(timeout=2)
+        return id(client._session_for_current_thread())
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        session_ids = tuple(executor.map(session_identity, range(2)))
+
+    assert len(set(session_ids)) == 2
 
 
 @pytest.mark.parametrize(

@@ -68,6 +68,30 @@ def test_support_manifests_do_not_make_django_shape_a_monorepo(
     assert assessment.fit == RubricFit.HIGH
 
 
+def test_support_directory_names_do_not_make_software_look_like_content(
+    make_snapshot: Callable[..., RepositorySnapshot],
+) -> None:
+    assessment = assess_rubric_fit(
+        make_snapshot(
+            description=(
+                "Build a distributable Python package while keeping generated "
+                "dist and node_modules directories out of source control"
+            ),
+            files=(
+                "pyproject.toml",
+                "src/project/app.py",
+                "tests/test_app.py",
+                "build/package.json",
+                "dist/requirements.txt",
+                "node_modules/example/package.json",
+            ),
+        )
+    )
+
+    assert assessment.repository_kind == RepositoryKind.SOFTWARE
+    assert assessment.fit == RubricFit.HIGH
+
+
 def test_root_and_real_nested_project_make_pydantic_shape_a_monorepo(
     make_snapshot: Callable[..., RepositorySnapshot],
 ) -> None:

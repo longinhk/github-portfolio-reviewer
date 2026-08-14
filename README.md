@@ -172,7 +172,9 @@ Try `longinhk/github-portfolio-reviewer` to review this project itself. A cold
 review normally makes four base GitHub requests plus at most ten bounded
 text-file requests. A temporary connection or GitHub server failure may retry
 one request once. Repeating the same review from any browser session within five
-minutes uses the process-wide response cache.
+minutes uses the process-wide response cache. Concurrent cold reviews of
+different repositories run independently, while duplicate requests for the same
+repository share one fetch.
 
 ### Optional deployment or local token
 
@@ -274,8 +276,9 @@ hiring, code-review, compliance, or security product.
   with irrelevant testing and CI expectations.
 - Content inspection is intentionally limited to ten small text files with fixed
   slots: one security policy, one dependency updater, one `pyproject.toml`, one
-  explicit test configuration, one coverage configuration, two workflows, and
-  three test sources. Unused slots are not borrowed by another category.
+  explicit test configuration, one coverage configuration, two CI
+  configurations, and three test sources. Unused slots are not borrowed by
+  another category.
 - Python test inspection recognizes implementation signals but does not execute
   tests or prove correctness.
 - Workflow and configuration parsing is deliberately conservative and may

@@ -79,9 +79,11 @@ then requests the preferred README and recursive Git tree at that commit. It may
 then fetch at most ten small, allow-listed text files. Ruleset
 1.2 reserves fixed slots for one security policy, one dependency updater, one
 `pyproject.toml`, one explicit test configuration, one coverage configuration,
-two GitHub workflows, and three test sources. Paths are sorted deterministically
-inside each bucket, and unused slots are not borrowed. This prevents a repository
-with many workflows, for example, from consuming every test-inspection slot.
+two CI configurations, and three test sources. The CI bucket recognizes GitHub
+Actions, CircleCI, GitLab CI, Travis CI, Azure Pipelines, and Jenkins. Paths are
+sorted deterministically inside each bucket, and unused slots are not borrowed.
+This prevents a repository with many CI files, for example, from consuming every
+test-inspection slot.
 
 The adapter never clones the repository, executes code, downloads arbitrary
 binaries, or includes inspected content in exports. Sensitive filenames are
@@ -138,12 +140,17 @@ instead of hiding them behind one number.
 
 ### Small process-wide cache
 
-Streamlit reuses one locked GitHub client for the configured deployment access
-mode. Its bounded cache keeps up to 32 immutable repository snapshots for five
-minutes and is shared across browser sessions. This reduces repeated API calls
-without adding Redis, a database, accounts, or persistent user data. Public
-visitors never enter a personal token; an optional maintainer token is loaded
-only from Streamlit Secrets.
+Streamlit reuses one thread-safe GitHub client for the configured deployment
+access mode. Its bounded cache keeps up to 32 immutable repository snapshots for
+five minutes and is shared across browser sessions. A short cache lock protects
+only cache bookkeeping. Per-repository fetch locks coalesce simultaneous cold
+requests for the same snapshot, while different repositories can be fetched in
+parallel. Default HTTP sessions are reused per worker thread so concurrent
+requests do not share mutable transport state.
+
+This reduces repeated API calls without adding Redis, a database, accounts, or
+persistent user data. Public visitors never enter a personal token; an optional
+maintainer token is loaded only from Streamlit Secrets.
 
 ### Bounded automatic retries
 
