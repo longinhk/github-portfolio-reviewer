@@ -6,8 +6,14 @@ find layout assumptions that synthetic fixtures may miss.
 
 These results are **validation observations, not endorsements or quality
 rankings**. Public repositories change over time, so their numeric scores may be
-different when the review is repeated. The portfolio-presentation score does
-not measure code correctness, maintainer ability, popularity, or hiring value.
+different when the reviewed commit changes. The portfolio-presentation score
+does not measure code correctness, maintainer ability, popularity, or hiring
+value.
+
+Ruleset 1.4 records the default-branch commit SHA used for README, tree, and
+sampled-file evidence. Repeating a validation against the same SHA makes the
+repository content comparable, although repository-level metadata such as
+stars and descriptions can still change.
 
 ## Ruleset 1.3 observations
 
@@ -35,6 +41,19 @@ Regression fixtures model the relevant Django, Pydantic, and freeCodeCamp path
 shapes, so continuous integration verifies the corrected behavior without
 depending on GitHub availability or mutable third-party repositories.
 
+## Frozen benchmark suite
+
+Ruleset 1.4 adds twelve offline benchmark shapes covering beginner and mature
+software projects, notebooks, documentation-heavy software, content
+collections, sample-heavy projects, monorepos, scoped packages, archived
+repositories, malformed CI, weak tests, and truncated GitHub evidence. The
+benchmarks assert classification, rubric fit, score ranges, and important check
+states rather than one brittle exact score.
+
+These fixtures do not prove that the rubric is universally correct. They make
+intentional rule changes visible in code review and prevent known edge cases
+from returning silently.
+
 ## Linked-subdirectory observation
 
 On 2026-08-05, the reviewer analyzed
@@ -49,7 +68,8 @@ project or establish a permanent expected score.
 
 1. Start the Streamlit application.
 2. Review each repository in the table using the **General** focus.
-3. Record the ruleset version, date, repository type, rubric fit, and score state.
+3. Record the ruleset version, date, reviewed commit SHA, repository type,
+   rubric fit, score state, and whether the score is provisional.
 4. Investigate classification changes before updating this document.
 
 Do not make live third-party scores exact continuous-integration assertions.

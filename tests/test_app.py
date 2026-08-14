@@ -2,9 +2,12 @@
 
 from collections.abc import Callable
 from pathlib import Path
+from types import SimpleNamespace
 
+import pytest
 from streamlit.testing.v1 import AppTest
 
+import github_portfolio_reviewer.app as app_module
 from github_portfolio_reviewer.analyzer import analyze_repository
 from github_portfolio_reviewer.app import (
     LINKED_SCOPE_LABEL,
@@ -72,6 +75,7 @@ def test_initial_page_renders_without_exceptions() -> None:
     repository_input = next(
         text_input for text_input in app.text_input if text_input.label == "Repository"
     )
+    assert all(text_input.label != "GitHub token" for text_input in app.text_input)
     assert "/tree/" in repository_input.help
     assert "default branch" in repository_input.help
     review_focus = next(
@@ -106,6 +110,7 @@ def test_report_page_renders_all_sections_without_exceptions(
         ),
         files=("app.py", "tests/test_app.py", "pyproject.toml"),
         inspection_truncated=True,
+        commit_sha="b" * 40,
     )
     report = score_repository(snapshot, analyze_repository(snapshot))
     app = AppTest.from_file(str(entry_point))
@@ -127,6 +132,15 @@ def test_report_page_renders_all_sections_without_exceptions(
     )
     assert any(
         "PORTFOLIO PRESENTATION SCORE" in markdown.value for markdown in app.markdown
+    )
+    assert any(
+        "PROVISIONAL PORTFOLIO PRESENTATION SCORE" in markdown.value
+        and "verified" in markdown.value
+        for markdown in app.markdown
+    )
+    assert any(
+        "REVISION" in markdown.value and "bbbbbbbbbbbb" in markdown.value
+        for markdown in app.markdown
     )
     assert any(
         expander.label == "Why this repository type?" for expander in app.expander
@@ -363,6 +377,51 @@ def test_expected_errors_have_specific_presentations() -> None:
     assert len(titles) == len(errors)
 
 
+def test_unexpected_review_error_is_logged_but_not_exposed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeStatus:
+        def write(self, message: str) -> None:
+            pass
+
+        def update(self, **kwargs: object) -> None:
+            pass
+
+    messages: list[str] = []
+    logged: list[str] = []
+    fake_streamlit = SimpleNamespace(
+        session_state={},
+        status=lambda *args, **kwargs: FakeStatus(),
+        error=messages.append,
+    )
+
+    def fail_review(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("private implementation detail")
+
+    monkeypatch.setattr(app_module, "st", fake_streamlit)
+    monkeypatch.setattr(app_module, "_review_client", lambda token: object())
+    monkeypatch.setattr(app_module, "review_repository", fail_review)
+    monkeypatch.setattr(
+        app_module.LOGGER,
+        "exception",
+        lambda message: logged.append(message),
+    )
+
+    completed = app_module._run_review(
+        "example/project",
+        None,
+        ReviewMode.GENERAL,
+        scope_to_linked_subdirectory=False,
+    )
+
+    assert completed is False
+    assert logged == ["Unexpected repository review failure"]
+    assert len(messages) == 1
+    assert "internal error" in messages[0]
+    assert "private implementation detail" not in messages[0]
+    assert "RuntimeError" not in messages[0]
+
+
 def test_source_url_encodes_branch_and_path(
     make_snapshot: Callable[..., RepositorySnapshot],
 ) -> None:
@@ -374,4 +433,28 @@ def test_source_url_encodes_branch_and_path(
     assert _source_url(report, "docs/review notes.md") == (
         "https://github.com/example/project/blob/"
         "feature%2Freview/docs/review%20notes.md"
+    )
+
+
+def test_source_url_uses_commit_scope_and_original_path_case(
+    make_snapshot: Callable[..., RepositorySnapshot],
+) -> None:
+    report = ReviewReport(
+        repository=make_snapshot(
+            html_url="https://github.com/example/project/tree/main/packages/api",
+            default_branch="main",
+            commit_sha="c" * 40,
+            scope_path="packages/api",
+            files=(".github/workflows/CI.yml", "README.rst"),
+            readme_path="README.rst",
+        ),
+        checks=(),
+    )
+
+    assert _source_url(report, ".github/workflows/ci.yml") == (
+        "https://github.com/example/project/blob/"
+        f"{'c' * 40}/packages/api/.github/workflows/CI.yml"
+    )
+    assert _source_url(report, "README.rst").endswith(
+        f"/{'c' * 40}/packages/api/README.rst"
     )

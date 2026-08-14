@@ -108,7 +108,7 @@ def test_report_records_ruleset_and_mode_without_changing_score(
     assert general.review_mode == ReviewMode.GENERAL
     assert ai_ml.review_mode == ReviewMode.AI_ML
     assert general.ruleset_version == ai_ml.ruleset_version == RULESET_VERSION
-    assert RULESET_VERSION == "1.3.0"
+    assert RULESET_VERSION == "1.4.0"
 
 
 def test_scoring_preserves_structured_sources_and_target(
@@ -132,3 +132,14 @@ def test_scoring_preserves_structured_sources_and_target(
     assert check.sources == ("tests/test_service.py",)
     assert check.target == "Test implementation"
     assert check.confidence == EvidenceConfidence.SAMPLED
+    assert report.score_is_provisional is True
+    assert report.evidence_counts[EvidenceConfidence.SAMPLED] == 1
+
+
+def test_fully_verified_report_is_not_provisional(
+    make_snapshot: Callable[..., RepositorySnapshot],
+) -> None:
+    report = score_repository(make_snapshot(), _findings_with_status(CheckStatus.PASS))
+
+    assert report.score == 100
+    assert report.score_is_provisional is False

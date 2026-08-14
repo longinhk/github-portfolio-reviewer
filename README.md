@@ -3,6 +3,8 @@
 [![CI](https://github.com/longinhk/github-portfolio-reviewer/actions/workflows/ci.yml/badge.svg)](https://github.com/longinhk/github-portfolio-reviewer/actions/workflows/ci.yml)
 ![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white)
 
+**Live application:** [app-portfolio-reviewer.streamlit.app](https://app-portfolio-reviewer.streamlit.app/)
+
 A Streamlit student portfolio application that reviews how effectively a public
 GitHub repository presents an engineering project to internship recruiters and
 technical reviewers. It produces a transparent portfolio-presentation score out
@@ -25,6 +27,8 @@ comes from explicit Python rules applied to read-only GitHub evidence.
   folder or the whole repository; file URLs identify the repository root.
 - Collects repository metadata, the preferred README, the recursive file tree,
   and a bounded allowlist of small text files through the GitHub REST API.
+- Resolves the default branch to one immutable commit before reading the README
+  and tree, and records that revision in the UI and portable reports.
 - Reviews metadata, README quality, structure, tests, CI/CD, documentation, and
   basic security signals.
 - Deterministically identifies conventional software projects, monorepos, clear
@@ -40,14 +44,16 @@ comes from explicit Python rules applied to read-only GitHub evidence.
 - Offers General, Python, AI/ML, data-science, and backend internship review
   focuses. Focus changes recommendation order—not the comparable score.
 - Exports deterministic Markdown and JSON reports without raw source content.
-- Reuses recent public evidence for five minutes and retries only temporary
-  connection or GitHub server failures once.
+- Reuses recent public evidence across browser sessions for five minutes and
+  retries only temporary connection or GitHub server failures once.
 - Documents a [real-repository validation matrix](docs/validation-matrix.md)
   without treating third-party scores as code-quality rankings.
 - Includes dark and light GitHub-inspired themes, check filters, search, and a
   mobile-responsive report.
-- Handles missing repositories, invalid tokens, API limits, timeouts, empty
-  repositories, missing READMEs, and truncated trees.
+- Labels scores provisional whenever evidence is sampled, unavailable, or
+  affected by a truncated tree.
+- Handles missing repositories, invalid deployment tokens, API limits, timeouts,
+  empty repositories, missing READMEs, and truncated trees.
 - Uses no database and does not intentionally persist GitHub tokens.
 
 ## Portfolio-presentation scoring rubric
@@ -68,7 +74,7 @@ a reliable measure of engineering quality. CI configuration is not proof that a
 workflow passes, and suspicious filenames are not proof that they contain
 secrets.
 
-Ruleset 1.3 separates a check's result from how completely its evidence was
+The reviewer separates a check's result from how completely its evidence was
 inspected:
 
 | Confidence | Meaning |
@@ -160,15 +166,15 @@ streamlit run streamlit_app.py
    improvement plan.
 6. Download a deterministic Markdown or JSON report when you want to save or
    share the review.
-7. Open **Settings** to change appearance or provide an optional GitHub token.
+7. Open **Settings** to change appearance and see the current API mode.
 
 Try `longinhk/github-portfolio-reviewer` to review this project itself. A cold
-review normally makes three base GitHub requests plus at most ten bounded
+review normally makes four base GitHub requests plus at most ten bounded
 text-file requests. A temporary connection or GitHub server failure may retry
-one request once. Repeating the same review in one browser session within five
-minutes uses the local response cache.
+one request once. Repeating the same review from any browser session within five
+minutes uses the process-wide response cache.
 
-### Optional local token
+### Optional deployment or local token
 
 Copy the example secrets file and replace its placeholder:
 
@@ -178,12 +184,12 @@ cp .streamlit/secrets.toml.example .streamlit/secrets.toml
 
 Never commit `.streamlit/secrets.toml`; it is excluded by `.gitignore`. For
 public repositories, use no token or a fine-grained, least-privilege token with
-only the read access the app needs. A token is held in process/session memory for
-GitHub requests, but is not intentionally logged, persisted, or included in
-reports. Revoke it if exposure is suspected.
+only the read access the app needs. A token is held in process memory for GitHub
+requests, but is not intentionally logged, persisted, or included in reports.
+Revoke it if exposure is suspected.
 
-For a public demo, configure an optional maintainer token through Streamlit
-Secrets instead of asking recruiters to paste personal credentials. This is a
+For the public demo, configure an optional maintainer token through Streamlit
+Secrets. Visitors are never asked to paste personal credentials. This is a
 GitHub token only; the application never asks for an AI service key.
 
 ## Quality checks
@@ -195,11 +201,13 @@ python -m pytest --cov=github_portfolio_reviewer --cov-report=term-missing
 ```
 
 The tests inject fake HTTP sessions, block accidental real requests, and enforce
-the coverage threshold in `.coveragerc`. This keeps them fast, repeatable, and
-independent of GitHub availability or rate limits.
+the coverage threshold in `.coveragerc`. Twelve frozen repository-shape
+benchmarks protect important classifications and findings without depending on
+mutable third-party repositories or GitHub availability.
 
-GitHub Actions runs the same three checks for pushes to `main` and pull
-requests. The workflow has read-only repository permissions.
+GitHub Actions runs the same three checks on Python 3.12 and a compatibility test
+on Python 3.13 for pushes to `main` and pull requests. The workflow has read-only
+repository permissions.
 
 ## Deploy to Streamlit Community Cloud
 
@@ -210,16 +218,15 @@ requests. The workflow has read-only repository permissions.
    commit the real value.
 5. Choose a free `*.streamlit.app` subdomain, deploy, and test from a private
    browser window with small, large, valid, and invalid repository inputs.
-6. Add the live URL to this README and the GitHub About section only after the
-   deployment has succeeded.
+6. Confirm the live URL and keep it in this README and the GitHub About section.
 
 Current Streamlit Community Cloud dependency discovery prioritizes `uv.lock`, so
 the committed lock file supplies the reproducible environment and installs this
 package from its `pyproject.toml`. See Streamlit's
 [dependency-file order](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/app-dependencies)
 and [secrets guidance](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/secrets-management).
-Deployment requires the repository owner's GitHub and Streamlit accounts. This
-repository does not claim to be deployed until a working public URL is added.
+Deployment requires the repository owner's GitHub and Streamlit accounts. The
+current public deployment is linked at the top of this README.
 
 ## Required cost
 
@@ -275,6 +282,9 @@ hiring, code-review, compliance, or security product.
   return partial credit when evidence is ambiguous.
 - The high-confidence secret scan is bounded and is not a substitute for Git
   history scanning, dependency auditing, or a professional security review.
+- A clean bounded credential sample receives only partial credit and makes the
+  displayed score provisional; it is never presented as proof that the entire
+  repository is secret-free.
 - Test/example certificate and key fixtures are treated as advisory evidence,
   but production-like paths remain failures requiring manual investigation.
 - GitHub may truncate file trees for very large repositories; those reports are

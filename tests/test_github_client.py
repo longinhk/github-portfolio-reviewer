@@ -49,15 +49,19 @@ class FakeSession:
         responses: list[FakeResponse | requests.RequestException] | None = None,
         *,
         error: requests.RequestException | None = None,
+        auto_revision: bool = True,
     ) -> None:
         self.responses = list(responses or [])
         self.error = error
+        self.auto_revision = auto_revision
         self.calls: list[dict[str, Any]] = []
 
     def get(self, url: str, **kwargs: object) -> FakeResponse:
         self.calls.append({"url": url, **kwargs})
         if self.error:
             raise self.error
+        if self.auto_revision and "/git/ref/heads/" in url:
+            return FakeResponse(200, {"object": {"sha": "a" * 40}})
         if not self.responses:
             raise AssertionError("No fake response remains for this request.")
         outcome = self.responses.pop(0)
@@ -217,13 +221,19 @@ def test_fetch_repository_builds_snapshot_and_expected_requests() -> None:
 
     assert snapshot.reference.full_name == "renamed/project"
     assert snapshot.readme == readme
+    assert snapshot.commit_sha == "a" * 40
+    assert snapshot.readme_path == "README.md"
     assert snapshot.files == ("README.md", "src/app.py")
     assert snapshot.tree_truncated is True
-    assert session.calls[1]["url"].endswith("/repos/renamed/project/readme")
-    assert session.calls[2]["url"].endswith(
-        "/repos/renamed/project/git/trees/feature%2Fdocs"
+    assert session.calls[1]["url"].endswith(
+        "/repos/renamed/project/git/ref/heads/feature%2Fdocs"
     )
-    assert session.calls[2]["params"] == {"recursive": "1"}
+    assert session.calls[2]["url"].endswith("/repos/renamed/project/readme")
+    assert session.calls[2]["params"] == {"ref": "a" * 40}
+    assert session.calls[3]["url"].endswith(
+        f"/repos/renamed/project/git/trees/{'a' * 40}"
+    )
+    assert session.calls[3]["params"] == {"recursive": "1"}
     assert session.calls[0]["timeout"] == 4.0
     headers = session.calls[0]["headers"]
     assert headers["Authorization"] == "Bearer test-token"
@@ -289,10 +299,10 @@ def test_fetch_repository_scopes_evidence_to_linked_default_branch_folder() -> N
     assert tuple(file.content for file in snapshot.inspected_files) == tuple(
         scoped_contents.values()
     )
-    assert session.calls[1]["url"].endswith(
+    assert session.calls[2]["url"].endswith(
         "/repos/example/project/readme/packages/api"
     )
-    assert session.calls[1]["params"] == {"ref": "main"}
+    assert session.calls[2]["params"] == {"ref": "a" * 40}
 
 
 def test_scoped_review_resolves_a_default_branch_containing_slashes() -> None:
@@ -326,7 +336,8 @@ def test_scoped_review_resolves_a_default_branch_containing_slashes() -> None:
 
     assert snapshot.scope_path == "packages/api"
     assert snapshot.files == ("app.py",)
-    assert session.calls[1]["params"] == {"ref": "feature/docs"}
+    assert session.calls[1]["url"].endswith("/git/ref/heads/feature%2Fdocs")
+    assert session.calls[2]["params"] == {"ref": "a" * 40}
 
 
 def test_scoped_review_rejects_a_non_default_branch_before_fetching_files() -> None:
@@ -374,8 +385,8 @@ def test_tree_url_keeps_whole_repository_behavior_without_scope_opt_in() -> None
     assert snapshot.scope_path is None
     assert snapshot.html_url == "https://github.com/example/project"
     assert snapshot.files == ("root.py", "packages/api/app.py")
-    assert session.calls[1]["url"].endswith("/repos/example/project/readme")
-    assert session.calls[1]["params"] is None
+    assert session.calls[2]["url"].endswith("/repos/example/project/readme")
+    assert session.calls[2]["params"] == {"ref": "a" * 40}
 
 
 def test_scoped_review_rejects_a_missing_default_branch_folder() -> None:
@@ -498,7 +509,7 @@ def test_inspection_reserves_slots_and_caps_blob_requests_at_ten_files() -> None
 
     assert tuple(file.path for file in snapshot.inspected_files) == expected_paths
     assert snapshot.inspection_truncated is True
-    assert len(session.calls) == 13
+    assert len(session.calls) == 14
 
 
 def test_inspection_fetches_renovate_when_dependabot_is_absent() -> None:
@@ -720,6 +731,7 @@ def test_failed_fetch_is_not_cached() -> None:
     session = FakeSession(
         [
             FakeResponse(500, {"message": "Server error"}),
+            FakeResponse(500, {"message": "Server error"}),
             FakeResponse(200, repository_metadata(size=0)),
             FakeResponse(404, {"message": "Not Found"}),
         ]
@@ -732,7 +744,7 @@ def test_failed_fetch_is_not_cached() -> None:
     snapshot = client.fetch_repository(reference)
 
     assert snapshot.reference.full_name == "example/project"
-    assert len(session.calls) == 3
+    assert len(session.calls) == 4
 
 
 @pytest.mark.parametrize(
@@ -751,15 +763,17 @@ def test_failed_fetch_is_not_cached() -> None:
 def test_http_errors_map_to_domain_exceptions(
     response: FakeResponse, exception_type: type[Exception]
 ) -> None:
-    session = FakeSession([response])
+    retriable = response.status_code in {500, 502, 503, 504}
+    responses = [response, response] if retriable else [response]
+    session = FakeSession(responses)
     delays: list[float] = []
     with pytest.raises(exception_type):
         GitHubClient(  # type: ignore[arg-type]
             session=session,
             sleeper=delays.append,
         ).fetch_repository(parse_repository_reference("example/project"))
-    assert len(session.calls) == 1
-    assert delays == []
+    assert len(session.calls) == (2 if retriable else 1)
+    assert delays == ([0.25] if retriable else [])
 
 
 def test_rate_limit_message_prefers_retry_after_for_public_requests() -> None:
@@ -827,6 +841,76 @@ def test_malformed_json_is_rejected() -> None:
         GitHubClient(session=session).fetch_repository(  # type: ignore[arg-type]
             parse_repository_reference("example/project")
         )
+
+
+def test_readme_path_and_revision_are_preserved() -> None:
+    readme = "# Project"
+    session = FakeSession(
+        [
+            FakeResponse(200, repository_metadata()),
+            FakeResponse(
+                200,
+                {
+                    "path": "ReadMe.rst",
+                    "content": base64.b64encode(readme.encode()).decode(),
+                },
+            ),
+            FakeResponse(200, {"tree": [], "truncated": False}),
+        ]
+    )
+
+    snapshot = GitHubClient(session=session).fetch_repository(  # type: ignore[arg-type]
+        parse_repository_reference("example/project")
+    )
+
+    assert snapshot.commit_sha == "a" * 40
+    assert snapshot.readme_path == "ReadMe.rst"
+    assert session.calls[2]["params"] == {"ref": "a" * 40}
+    assert f"/git/trees/{'a' * 40}" in str(session.calls[3]["url"])
+
+
+def test_nonempty_repository_fails_safely_when_revision_cannot_be_resolved() -> None:
+    session = FakeSession(
+        [
+            FakeResponse(200, repository_metadata()),
+            FakeResponse(404, {"message": "Not Found"}),
+        ],
+        auto_revision=False,
+    )
+
+    with pytest.raises(GitHubAPIError, match="stable revision"):
+        GitHubClient(session=session).fetch_repository(  # type: ignore[arg-type]
+            parse_repository_reference("example/project")
+        )
+
+    assert len(session.calls) == 2
+
+
+def test_optional_inspection_stops_after_repeated_transport_failure() -> None:
+    tree = [
+        tree_blob(".github/workflows/first.yml", "first", 20),
+        tree_blob(".github/workflows/second.yml", "second", 20),
+    ]
+    session = FakeSession(
+        [
+            FakeResponse(200, repository_metadata()),
+            FakeResponse(404, {"message": "Not Found"}),
+            FakeResponse(200, {"tree": tree, "truncated": False}),
+            requests.Timeout("first timeout"),
+            requests.Timeout("second timeout"),
+            encoded_blob("name: should-not-be-requested"),
+        ]
+    )
+
+    snapshot = GitHubClient(session=session).fetch_repository(  # type: ignore[arg-type]
+        parse_repository_reference("example/project")
+    )
+
+    blob_calls = [call for call in session.calls if "/git/blobs/" in str(call["url"])]
+    assert len(blob_calls) == 2
+    assert all(call["timeout"] == 4.0 for call in blob_calls)
+    assert snapshot.inspected_files == ()
+    assert snapshot.inspection_truncated is True
 
 
 def test_malformed_readme_base64_is_rejected() -> None:

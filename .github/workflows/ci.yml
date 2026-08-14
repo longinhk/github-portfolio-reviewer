@@ -39,3 +39,28 @@ jobs:
 
       - name: Test
         run: uv run pytest --cov=github_portfolio_reviewer --cov-report=term-missing
+
+  python-compatibility:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: |
+            pyproject.toml
+            uv.lock
+
+      - name: Install locked project and development tools
+        run: |
+          python -m pip install uv==0.11.32
+          uv sync --frozen --extra dev
+
+      - name: Run compatibility tests
+        run: uv run pytest -q

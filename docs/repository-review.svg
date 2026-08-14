@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="675" viewBox="0 0 1200 675" role="img" aria-labelledby="title description">
   <title id="title">GitHub Portfolio Reviewer interface</title>
-  <desc id="description">Dark developer-tool interface showing a portfolio presentation score, status counts, and prioritized improvements.</desc>
+  <desc id="description">Dark developer-tool interface showing a provisional portfolio presentation score, status counts, and prioritized improvements.</desc>
   <rect width="1200" height="675" rx="18" fill="#0d1117"/>
   <rect x="1" y="1" width="1198" height="673" rx="17" fill="none" stroke="#30363d" stroke-width="2"/>
 
@@ -39,7 +39,8 @@
       <line x1="480" y1="0" x2="480" y2="126" stroke="#30363d"/>
       <line x1="690" y1="0" x2="690" y2="126" stroke="#30363d"/>
       <line x1="900" y1="0" x2="900" y2="126" stroke="#30363d"/>
-      <text x="22" y="26" fill="#8b949e" font-family="monospace" font-size="12" font-weight="700">PORTFOLIO PRESENTATION SCORE</text>
+      <text x="22" y="18" fill="#d29922" font-family="monospace" font-size="10" font-weight="700">PROVISIONAL</text>
+      <text x="22" y="32" fill="#8b949e" font-family="monospace" font-size="10" font-weight="700">PORTFOLIO PRESENTATION SCORE</text>
       <text x="22" y="70" fill="#e6edf3" font-family="monospace" font-size="38" font-weight="700">80.5</text>
       <text x="115" y="70" fill="#8b949e" font-family="monospace" font-size="14">/100</text>
       <rect x="22" y="98" width="220" height="4" rx="2" fill="#21262d"/>
@@ -59,7 +60,7 @@
 
       <text x="924" y="31" fill="#8b949e" font-family="monospace" font-size="12" font-weight="700">AVAILABLE</text>
       <text x="924" y="67" fill="#58a6ff" font-family="monospace" font-size="26" font-weight="700">+19.5</text>
-      <text x="924" y="91" fill="#8b949e" font-size="13">recoverable points</text>
+      <text x="924" y="91" fill="#8b949e" font-size="13">unearned rubric points</text>
     </g>
 
     <text x="48" y="477" fill="#8b949e" font-family="monospace" font-size="12" font-weight="700">HIGHEST-IMPACT NEXT STEPS</text>

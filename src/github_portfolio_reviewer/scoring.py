@@ -14,7 +14,7 @@ from github_portfolio_reviewer.models import (
     ScoredCheck,
 )
 
-RULESET_VERSION = "1.3.0"
+RULESET_VERSION = "1.4.0"
 
 
 @dataclass(frozen=True, slots=True)
@@ -204,7 +204,7 @@ CHECK_SPECIFICATIONS: dict[CheckId, CheckSpecification] = {
     ),
     CheckId.NO_DETECTED_SECRETS: CheckSpecification(
         Category.SECURITY,
-        "No detected credential patterns",
+        "Credential patterns in bounded sample",
         4,
         "Remove detected credentials from history, rotate them immediately, and use repository secrets or environment variables.",
     ),

@@ -13,7 +13,14 @@ from github_portfolio_reviewer.models import (
 
 
 def _strong_readme() -> str:
-    body = " ".join(["portfolio"] * 210)
+    paragraph = (
+        "The reviewer collects public repository metadata and bounded text evidence, "
+        "then applies transparent Python rules for documentation, testing, automation, "
+        "security hygiene, and project structure. Every result includes its source, "
+        "confidence, limitations, and a practical improvement so students can understand "
+        "the engineering tradeoffs instead of trusting an unexplained rating. "
+    )
+    body = paragraph * 5
     return f"""# Project
 
 [![CI](https://github.com/example/project/actions/workflows/ci.yml/badge.svg)](#)
@@ -90,9 +97,9 @@ def test_strong_repository_passes_every_check(
             _inspected(".coveragerc", "[run]\nbranch = True\n"),
             _inspected(
                 ".github/workflows/ci.yml",
-                "permissions: read-all\nsteps:\n"
-                "  - uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
-                "  - run: pytest --cov=project\n",
+                "on: [push]\npermissions: read-all\njobs:\n  test:\n    steps:\n"
+                "      - uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
+                "      - run: pytest --cov=project\n",
             ),
             _inspected(
                 "SECURITY.md",
@@ -110,7 +117,18 @@ def test_strong_repository_passes_every_check(
     findings = analyze_repository(snapshot)
 
     assert len(findings) == len(CheckId)
-    assert all(finding.status == CheckStatus.PASS for finding in findings)
+    assert all(
+        finding.status == CheckStatus.PASS
+        for finding in findings
+        if finding.check_id != CheckId.NO_DETECTED_SECRETS
+    )
+    secret_sample = next(
+        finding
+        for finding in findings
+        if finding.check_id == CheckId.NO_DETECTED_SECRETS
+    )
+    assert secret_sample.status == CheckStatus.PARTIAL
+    assert secret_sample.confidence == EvidenceConfidence.SAMPLED
 
 
 def test_minimal_repository_produces_expected_failures(
@@ -150,7 +168,7 @@ def test_paths_are_case_insensitive_and_both_workflow_suffixes_work(
     )
     statuses = _statuses(snapshot)
 
-    assert statuses[CheckId.CI_WORKFLOW] == CheckStatus.PASS
+    assert statuses[CheckId.CI_WORKFLOW] == CheckStatus.PARTIAL
     assert statuses[CheckId.TEST_FILES] == CheckStatus.PASS
     assert statuses[CheckId.DOCS] == CheckStatus.PASS
     assert statuses[CheckId.SECURITY_POLICY] == CheckStatus.PARTIAL
@@ -290,7 +308,38 @@ def test_readme_section_keywords_without_headings_receive_partial_credit(
 
     assert statuses[CheckId.README_INSTALLATION] == CheckStatus.PARTIAL
     assert statuses[CheckId.README_USAGE] == CheckStatus.PARTIAL
-    assert statuses[CheckId.README_DETAIL] == CheckStatus.PARTIAL
+    assert statuses[CheckId.README_DETAIL] == CheckStatus.FAIL
+
+
+def test_readme_sources_keep_the_actual_github_path(
+    make_snapshot: Callable[..., RepositorySnapshot],
+) -> None:
+    findings = analyze_repository(
+        make_snapshot(
+            readme="# Guide\n\n## Installation\n\nRun pip install locally.",
+            readme_path="README.rst",
+        )
+    )
+
+    readme_findings = (
+        finding
+        for finding in findings
+        if finding.check_id
+        in {
+            CheckId.README_EXISTS,
+            CheckId.README_DETAIL,
+            CheckId.README_INSTALLATION,
+        }
+    )
+    assert all(finding.sources == ("README.rst",) for finding in readme_findings)
+
+
+def test_repeated_word_padding_does_not_pass_readme_detail(
+    make_snapshot: Callable[..., RepositorySnapshot],
+) -> None:
+    statuses = _statuses(make_snapshot(readme="# Project\n\n" + "padding " * 250))
+
+    assert statuses[CheckId.README_DETAIL] == CheckStatus.FAIL
 
 
 def test_test_quality_uses_ast_without_executing_code(
@@ -335,6 +384,29 @@ def test_test_quality_uses_ast_without_executing_code(
     )
     assert unverified_finding.status == CheckStatus.PARTIAL
     assert unverified_finding.confidence == EvidenceConfidence.UNVERIFIED
+
+
+def test_test_quality_requires_assertions_across_two_test_cases(
+    make_snapshot: Callable[..., RepositorySnapshot],
+) -> None:
+    path = "tests/test_service.py"
+    statuses = _statuses(
+        make_snapshot(
+            files=(path,),
+            inspected_files=(
+                _inspected(
+                    path,
+                    "def test_first():\n"
+                    "    assert service() == 1\n"
+                    "    assert service() is not None\n\n"
+                    "def test_second():\n"
+                    "    service()\n",
+                ),
+            ),
+        )
+    )
+
+    assert statuses[CheckId.TEST_QUALITY] == CheckStatus.PARTIAL
 
 
 def test_partial_test_sample_has_sampled_confidence(
@@ -396,8 +468,8 @@ def test_workflow_content_checks_action_pins_and_permissions(
             inspected_files=(
                 _inspected(
                     path,
-                    "permissions: read-all\nsteps:\n"
-                    "  - uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n",
+                    "on: [push]\npermissions: read-all\njobs:\n  test:\n    steps:\n"
+                    "      - uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n",
                 ),
             ),
         )
@@ -408,16 +480,37 @@ def test_workflow_content_checks_action_pins_and_permissions(
             inspected_files=(
                 _inspected(
                     path,
-                    "permissions: write-all\nsteps:\n  - uses: actions/checkout@v4\n",
+                    "on: [push]\npermissions: write-all\njobs:\n  test:\n    steps:\n"
+                    "      - uses: actions/checkout@v4\n",
                 ),
             ),
         )
     )
 
     assert secure[CheckId.ACTIONS_PINNED] == CheckStatus.PASS
+    assert secure[CheckId.CI_WORKFLOW] == CheckStatus.PASS
     assert secure[CheckId.WORKFLOW_PERMISSIONS] == CheckStatus.PASS
     assert unsafe[CheckId.ACTIONS_PINNED] == CheckStatus.FAIL
     assert unsafe[CheckId.WORKFLOW_PERMISSIONS] == CheckStatus.FAIL
+
+
+def test_ci_check_prefers_an_inspected_workflow_over_an_uninspected_provider(
+    make_snapshot: Callable[..., RepositorySnapshot],
+) -> None:
+    workflow = ".github/workflows/ci.yml"
+    statuses = _statuses(
+        make_snapshot(
+            files=(".circleci/config.yml", workflow),
+            inspected_files=(
+                _inspected(
+                    workflow,
+                    '"on": [push]\njobs:\n  test:\n    steps:\n      - run: pytest\n',
+                ),
+            ),
+        )
+    )
+
+    assert statuses[CheckId.CI_WORKFLOW] == CheckStatus.PASS
 
 
 def test_security_and_dependabot_files_are_content_validated(
@@ -477,7 +570,7 @@ def test_secret_pattern_scan_is_bounded_and_reports_only_sampled_content(
     )
 
     assert flagged[CheckId.NO_DETECTED_SECRETS] == CheckStatus.FAIL
-    assert incomplete[CheckId.NO_DETECTED_SECRETS] == CheckStatus.PASS
+    assert incomplete[CheckId.NO_DETECTED_SECRETS] == CheckStatus.PARTIAL
     assert (
         _statuses(make_snapshot())[CheckId.NO_DETECTED_SECRETS] == CheckStatus.PARTIAL
     )
@@ -520,5 +613,5 @@ def test_clean_secret_scan_is_sampled_not_full_repository_verification(
         if finding.check_id == CheckId.NO_DETECTED_SECRETS
     )
 
-    assert finding.status == CheckStatus.PASS
+    assert finding.status == CheckStatus.PARTIAL
     assert finding.confidence == EvidenceConfidence.SAMPLED
