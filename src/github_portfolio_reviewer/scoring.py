@@ -14,7 +14,7 @@ from github_portfolio_reviewer.models import (
     ScoredCheck,
 )
 
-RULESET_VERSION = "1.4.0"
+RULESET_VERSION = "1.4.1"
 
 
 @dataclass(frozen=True, slots=True)

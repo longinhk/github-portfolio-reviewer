@@ -8,6 +8,10 @@ from collections import Counter
 from collections.abc import Callable
 from pathlib import PurePosixPath
 
+from github_portfolio_reviewer.conventions import (
+    GITHUB_WORKFLOW_PATTERN,
+    is_ci_file,
+)
 from github_portfolio_reviewer.models import (
     AnalysisFinding,
     CheckId,
@@ -146,7 +150,6 @@ LOCK_FILES = {
     "uv.lock",
     "yarn.lock",
 }
-GITHUB_WORKFLOW_PATTERN = re.compile(r"^\.github/workflows/.+\.ya?ml$")
 SECRET_PATTERNS = (
     ("private key", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
     ("GitHub token", re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}\b")),
@@ -926,52 +929,94 @@ def _ci_workflow_finding(
     paths: tuple[str, ...],
     inspected: dict[str, str],
 ) -> AnalysisFinding:
-    ci_files = tuple(path for path in paths if _is_ci_file(path))
-    ci_file = next(
-        (path for path in ci_files if path in inspected),
-        ci_files[0] if ci_files else None,
+    ci_files = tuple(path for path in paths if is_ci_file(path))
+    inspected_ci = tuple(
+        (path, inspected[path]) for path in ci_files if path in inspected
     )
-    if ci_file:
-        content = inspected.get(ci_file)
-        if content is None:
-            return _finding(
-                CheckId.CI_WORKFLOW,
-                CheckStatus.PARTIAL,
-                f"Detected CI configuration at {ci_file}, but its contents were not inspected.",
-                sources=(ci_file,),
-                confidence=EvidenceConfidence.UNVERIFIED,
-            )
-        configured = bool(
-            re.search(r"(?m)^\s*['\"]?(?:on|trigger)['\"]?\s*:", content)
-            and re.search(r"(?m)^\s*(?:jobs|stages)\s*:", content)
-            and re.search(r"(?m)^\s*-?\s*(?:uses|run|script)\s*:", content)
-        )
+    configured_file = next(
+        (path for path, content in inspected_ci if _has_ci_structure(path, content)),
+        None,
+    )
+    if configured_file is not None:
         return _finding(
             CheckId.CI_WORKFLOW,
-            CheckStatus.PASS if configured else CheckStatus.PARTIAL,
+            CheckStatus.PASS,
+            f"Verified executable CI structure in {configured_file}; execution status was not checked.",
+            sources=(configured_file,),
+        )
+    if inspected_ci:
+        inspected_paths = tuple(path for path, _ in inspected_ci)
+        return _finding(
+            CheckId.CI_WORKFLOW,
+            CheckStatus.PARTIAL,
             (
-                f"Verified executable CI structure in {ci_file}; execution status was not checked."
-                if configured
-                else f"{ci_file} exists but lacks a recognizable trigger, job, or execution step."
+                f"Inspected {len(inspected_paths)} CI configuration(s), but none "
+                "contained the required provider structure and execution step."
             ),
-            sources=(ci_file,),
+            sources=inspected_paths,
+        )
+    if ci_files:
+        return _finding(
+            CheckId.CI_WORKFLOW,
+            CheckStatus.PARTIAL,
+            f"Detected CI configuration at {ci_files[0]}, but its contents were not inspected.",
+            sources=(ci_files[0],),
+            confidence=EvidenceConfidence.UNVERIFIED,
         )
     return _missing_path_finding(
         snapshot, CheckId.CI_WORKFLOW, "No recognized CI configuration detected."
     )
 
 
-def _is_ci_file(path: str) -> bool:
-    return bool(
-        GITHUB_WORKFLOW_PATTERN.fullmatch(path)
-        or path
-        in {
-            ".circleci/config.yml",
-            ".travis.yml",
-            "azure-pipelines.yml",
-            "jenkinsfile",
-        }
-    )
+def _has_ci_structure(path: str, content: str) -> bool:
+    """Validate minimal executable structure for one supported CI provider."""
+    if GITHUB_WORKFLOW_PATTERN.fullmatch(path):
+        return bool(
+            re.search(r"(?m)^\s*['\"]?on['\"]?\s*:", content)
+            and re.search(r"(?m)^\s*jobs\s*:", content)
+            and re.search(r"(?m)^\s*-?\s*(?:uses|run)\s*:", content)
+        )
+    if path == ".circleci/config.yml":
+        return bool(
+            re.search(r"(?m)^\s*version\s*:", content)
+            and re.search(r"(?m)^\s*jobs\s*:", content)
+            and re.search(r"(?m)^\s*steps\s*:", content)
+            and re.search(r"(?m)^\s*-?\s*run\s*:", content)
+        )
+    if path == ".travis.yml":
+        return bool(
+            re.search(r"(?m)^\s*(?:language|jobs|stages|os|dist)\s*:", content)
+            and re.search(r"(?m)^\s*script\s*:", content)
+        )
+    if path == ".gitlab-ci.yml":
+        return bool(
+            re.search(r"(?m)^[A-Za-z0-9_.-]+\s*:\s*$", content)
+            and re.search(r"(?m)^\s*script\s*:", content)
+        )
+    if path == "azure-pipelines.yml":
+        return bool(
+            re.search(r"(?m)^\s*(?:stages|jobs|steps)\s*:", content)
+            and re.search(
+                r"(?m)^\s*-?\s*(?:script|task|bash|powershell|pwsh)\s*:",
+                content,
+            )
+        )
+    if path == "jenkinsfile":
+        has_execution_step = bool(
+            re.search(
+                r"(?m)^\s*(?:sh|bat|powershell|pwsh|echo)\s+(?:['\"]|\()",
+                content,
+            )
+        )
+        declarative = bool(
+            re.search(r"(?m)^\s*pipeline\s*\{", content)
+            and re.search(r"(?m)^\s*agent(?:\s+\w+|\s*\{)", content)
+            and re.search(r"(?m)^\s*stages?\s*\{", content)
+            and re.search(r"(?m)^\s*steps?\s*\{", content)
+        )
+        scripted = bool(re.search(r"(?m)^\s*node(?:\s*\([^)]*\))?\s*\{", content))
+        return has_execution_step and (declarative or scripted)
+    return False
 
 
 def _actions_pinned_finding(

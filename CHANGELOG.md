@@ -60,6 +60,12 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- Ruleset 1.4.1 validates inspected CircleCI, GitLab CI, Travis CI, Azure
+  Pipelines, and Jenkins configurations with provider-specific structural
+  evidence instead of leaving every non-GitHub configuration uninspected.
+- Concurrent cold reviews no longer share one process-wide network lock.
+  Duplicate requests for the same repository are coalesced, while different
+  repositories use independent fetch locks and thread-local HTTP sessions.
 - Public visitors no longer enter GitHub credentials. An optional token is read
   only from deployment secrets, reducing credential-handling risk.
 - The clean credential-pattern result is sampled and receives partial credit;

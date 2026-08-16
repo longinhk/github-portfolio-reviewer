@@ -108,7 +108,7 @@ def test_report_records_ruleset_and_mode_without_changing_score(
     assert general.review_mode == ReviewMode.GENERAL
     assert ai_ml.review_mode == ReviewMode.AI_ML
     assert general.ruleset_version == ai_ml.ruleset_version == RULESET_VERSION
-    assert RULESET_VERSION == "1.4.0"
+    assert RULESET_VERSION == "1.4.1"
 
 
 def test_scoring_preserves_structured_sources_and_target(

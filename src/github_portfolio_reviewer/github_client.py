@@ -8,13 +8,14 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import PurePosixPath
-from threading import RLock
+from threading import Lock, RLock, local
 from time import monotonic, sleep
 from typing import Any
 from urllib.parse import quote, unquote, urlparse
 
 import requests
 
+from github_portfolio_reviewer.conventions import is_ci_file
 from github_portfolio_reviewer.models import (
     RepositoryReference,
     RepositorySnapshot,
@@ -87,6 +88,16 @@ class _TreeBlob:
     path: str
     sha: str | None
     size: int | None
+
+
+class _FetchLock:
+    """Track one repository-key lock and the callers currently using it."""
+
+    __slots__ = ("lock", "users")
+
+    def __init__(self) -> None:
+        self.lock = Lock()
+        self.users = 0
 
 
 class GitHubClientError(Exception):
@@ -216,14 +227,16 @@ class GitHubClient:
         """Initialize the client with optional auth and injectable test boundaries."""
         self._timeout = timeout
         self._optional_timeout = min(timeout, optional_timeout)
-        self._session = session or requests.Session()
+        self._provided_session = session
+        self._thread_state = local()
         self._cache_ttl = cache_ttl
         self._clock = clock
         self._sleeper = sleeper
         self._snapshot_cache: OrderedDict[str, tuple[float, RepositorySnapshot]] = (
             OrderedDict()
         )
-        self._lock = RLock()
+        self._cache_lock = RLock()
+        self._fetch_locks: dict[str, _FetchLock] = {}
         self._headers = {
             "Accept": "application/vnd.github+json",
             "User-Agent": "github-portfolio-reviewer",
@@ -239,19 +252,6 @@ class GitHubClient:
         scope_to_linked_subdirectory: bool = False,
     ) -> RepositorySnapshot:
         """Collect evidence for a repository or its linked default-branch folder."""
-        with self._lock:
-            return self._fetch_repository(
-                reference,
-                scope_to_linked_subdirectory=scope_to_linked_subdirectory,
-            )
-
-    def _fetch_repository(
-        self,
-        reference: RepositoryReference,
-        *,
-        scope_to_linked_subdirectory: bool,
-    ) -> RepositorySnapshot:
-        """Collect one immutable snapshot while holding the client lock."""
         linked_tree_path = (
             reference.linked_tree_path if scope_to_linked_subdirectory else ()
         )
@@ -259,6 +259,31 @@ class GitHubClient:
         cached = self._cached_snapshot(cache_key)
         if cached is not None:
             return cached
+
+        fetch_lock = self._acquire_fetch_lock(cache_key)
+        try:
+            cached = self._cached_snapshot(cache_key)
+            if cached is not None:
+                return cached
+            snapshot = self._fetch_repository(
+                reference,
+                scope_to_linked_subdirectory=scope_to_linked_subdirectory,
+            )
+            self._store_snapshot(cache_key, snapshot)
+            return snapshot
+        finally:
+            self._release_fetch_lock(cache_key, fetch_lock)
+
+    def _fetch_repository(
+        self,
+        reference: RepositoryReference,
+        *,
+        scope_to_linked_subdirectory: bool,
+    ) -> RepositorySnapshot:
+        """Collect one uncached immutable snapshot without serializing other reviews."""
+        linked_tree_path = (
+            reference.linked_tree_path if scope_to_linked_subdirectory else ()
+        )
 
         encoded_name = quote(reference.full_name, safe="/")
         metadata = self._get_json(f"/repos/{encoded_name}")
@@ -348,31 +373,51 @@ class GitHubClient:
             commit_sha=commit_sha,
             readme_path=readme_path,
         )
-        self._store_snapshot(cache_key, snapshot)
         return snapshot
 
     def _cached_snapshot(self, key: str) -> RepositorySnapshot | None:
         """Return a fresh cached snapshot and discard expired entries on access."""
-        if self._cache_ttl <= 0:
-            return None
-        cached = self._snapshot_cache.get(key)
-        if cached is None:
-            return None
-        stored_at, snapshot = cached
-        if self._clock() - stored_at >= self._cache_ttl:
-            del self._snapshot_cache[key]
-            return None
-        self._snapshot_cache.move_to_end(key)
-        return snapshot
+        with self._cache_lock:
+            if self._cache_ttl <= 0:
+                return None
+            cached = self._snapshot_cache.get(key)
+            if cached is None:
+                return None
+            stored_at, snapshot = cached
+            if self._clock() - stored_at >= self._cache_ttl:
+                del self._snapshot_cache[key]
+                return None
+            self._snapshot_cache.move_to_end(key)
+            return snapshot
 
     def _store_snapshot(self, key: str, snapshot: RepositorySnapshot) -> None:
-        """Store one immutable snapshot in the bounded per-client cache."""
-        if self._cache_ttl <= 0:
-            return
-        self._snapshot_cache[key] = (self._clock(), snapshot)
-        self._snapshot_cache.move_to_end(key)
-        while len(self._snapshot_cache) > SNAPSHOT_CACHE_SIZE:
-            self._snapshot_cache.popitem(last=False)
+        """Store one immutable snapshot in the bounded thread-safe cache."""
+        with self._cache_lock:
+            if self._cache_ttl <= 0:
+                return
+            self._snapshot_cache[key] = (self._clock(), snapshot)
+            self._snapshot_cache.move_to_end(key)
+            while len(self._snapshot_cache) > SNAPSHOT_CACHE_SIZE:
+                self._snapshot_cache.popitem(last=False)
+
+    def _acquire_fetch_lock(self, key: str) -> _FetchLock:
+        """Serialize only cold fetches for the same repository cache key."""
+        with self._cache_lock:
+            fetch_lock = self._fetch_locks.get(key)
+            if fetch_lock is None:
+                fetch_lock = _FetchLock()
+                self._fetch_locks[key] = fetch_lock
+            fetch_lock.users += 1
+        fetch_lock.lock.acquire()
+        return fetch_lock
+
+    def _release_fetch_lock(self, key: str, fetch_lock: _FetchLock) -> None:
+        """Release and discard a per-key lock after its final caller exits."""
+        fetch_lock.lock.release()
+        with self._cache_lock:
+            fetch_lock.users -= 1
+            if fetch_lock.users == 0 and self._fetch_locks.get(key) is fetch_lock:
+                del self._fetch_locks[key]
 
     def _fetch_readme(
         self,
@@ -568,9 +613,10 @@ class GitHubClient:
     ) -> requests.Response:
         """Make one GET and retry once only for transient transport/server failures."""
         last_error: requests.RequestException | None = None
+        session = self._session_for_current_thread()
         for attempt in range(2):
             try:
-                response = self._session.get(
+                response = session.get(
                     url,
                     headers=self._headers,
                     params=params,
@@ -591,6 +637,16 @@ class GitHubClient:
         raise GitHubAPIError(
             "Could not reach GitHub. Check your connection and try again."
         ) from last_error
+
+    def _session_for_current_thread(self) -> requests.Session:
+        """Return the injected transport or one reusable Session per worker thread."""
+        if self._provided_session is not None:
+            return self._provided_session
+        session = getattr(self._thread_state, "session", None)
+        if session is None:
+            session = requests.Session()
+            self._thread_state.session = session
+        return session
 
 
 def _tree_blob(item: Mapping[str, object]) -> _TreeBlob:
@@ -717,11 +773,7 @@ def _inspection_bucket(path: str) -> str | None:
         return "test_config"
     if name in COVERAGE_CONFIG_NAMES and len(pure_path.parts) == 1:
         return "coverage_config"
-    if (
-        len(pure_path.parts) >= 3
-        and pure_path.parts[:2] == (".github", "workflows")
-        and pure_path.suffix in {".yaml", ".yml"}
-    ):
+    if is_ci_file(normalized):
         return "workflow"
     if _is_test_source(pure_path):
         return "test_source"
