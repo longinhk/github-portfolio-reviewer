@@ -110,13 +110,14 @@ def test_json_report_has_stable_explicit_schema() -> None:
         "checks",
         "suggestions",
     ]
-    assert data["schema_version"] == "1.4"
+    assert data["schema_version"] == "1.5"
     assert data["ruleset_version"] == "2.1.0"
     assert data["review_mode"] == "Python internship"
     assert data["score"] == {
         "kind": "portfolio_presentation",
         "points": 5,
         "max_points": 100,
+        "withheld_reason": None,
         "band": "Early stage",
         "provisional": True,
         "evidence_counts": {
@@ -210,6 +211,9 @@ def test_low_fit_report_withholds_numeric_score_and_recommendations() -> None:
         "kind": "portfolio_presentation",
         "points": None,
         "max_points": None,
+        "withheld_reason": (
+            "The software-project rubric does not fit this repository."
+        ),
         "band": "Not scored",
         "provisional": False,
         "evidence_counts": {
@@ -223,6 +227,23 @@ def test_low_fit_report_withholds_numeric_score_and_recommendations() -> None:
     assert all(check["recommendation"] is None for check in data["checks"])
     assert "**Not scored" in markdown
     assert "Category scores are hidden" in markdown
+
+
+def test_truncated_tree_export_explains_why_score_is_withheld() -> None:
+    report = _make_report()
+    report = replace(
+        report,
+        repository=replace(report.repository, tree_truncated=True),
+    )
+
+    data = report_to_dict(report)
+    markdown = render_markdown_report(report)
+
+    assert data["score"]["points"] is None
+    assert data["score"]["withheld_reason"] == (
+        "GitHub truncated the repository file tree."
+    )
+    assert "GitHub truncated the repository file tree" in markdown
 
 
 def test_scoped_report_exports_the_selected_subdirectory() -> None:

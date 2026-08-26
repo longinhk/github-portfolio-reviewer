@@ -58,8 +58,8 @@ Deterministic path, manifest, source, test, content-file, name, description, and
 topic signals produce a repository type and rubric fit:
 
 - conventional software projects have high fit and receive a numeric score;
-- monorepos and ambiguous layouts have medium fit, retain a whole-repository
-  score, and display a caution;
+- monorepos and ambiguous layouts with complete trees have medium fit, retain a
+  whole-repository score, and display a caution;
 - clear educational or content repositories have low fit, so the numeric score,
   category totals, and software-project recommendations are withheld.
 
@@ -67,6 +67,20 @@ Monorepo detection counts distinct manifest-backed project roots. Manifests in
 documentation, tests, examples, fixtures, and vendored support directories do
 not create project roots, preventing support tooling from triggering a
 whole-repository warning.
+
+Ruleset 1.4.2 also treats a tree containing at least three narrative documents
+and no conventional source or test files as content, even when the repository
+name and description do not use recognized content keywords. Executable notebooks
+are excluded from this structural shortcut so notebook-based projects remain
+ambiguous unless stronger educational signals are present.
+
+Ruleset 1.5.0 adds two conservative content-first shapes. A content-oriented
+repository may include untested example code without becoming a software
+application, and it may keep validation or website-generation code under an
+isolated `scripts/` or `tools/` directory. `site/` and `website/` count as
+supporting areas only when narrative files are at least as numerous as their
+software files. A conventional application with source and tests outside those
+support shapes remains eligible for software scoring.
 
 The assessment is intentionally conservative. It does not use stars, forks, an
 AI model, or repository popularity. An unfamiliar layout becomes medium fit
@@ -174,7 +188,10 @@ credit because uninspected files and Git history remain unknown.
 
 GitHub can truncate recursive trees for very large repositories. A feature that
 is found can still pass; apparent absence is marked provisional rather than
-presented as verified missing evidence.
+presented as verified missing evidence. Ruleset 1.5.0 keeps those reference
+checks visible but withholds the numeric score, category totals, and repository
+change suggestions because the missing paths make a whole-repository verdict
+unsafe.
 
 ### Conservative convention and fixture handling
 

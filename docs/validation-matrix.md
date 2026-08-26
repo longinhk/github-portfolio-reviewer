@@ -15,6 +15,54 @@ sampled-file evidence. Repeating a validation against the same SHA makes the
 repository content comparable, although repository-level metadata such as
 stars and descriptions can still change.
 
+## Ruleset 1.5.0 high-star fairness audit
+
+Observed on 2026-08-17 using default-branch evidence from a live GitHub search
+sorted by stars. The audit intentionally mixed content collections, educational
+repositories, monorepos, frameworks, and a very large source tree.
+
+| Repository | Observed classification | Presentation result |
+| --- | --- | ---: |
+| `codecrafters-io/build-your-own-x` | Educational/content · Low fit | Not scored |
+| `public-apis/public-apis` | Content with supporting scripts · Low fit | Not scored |
+| `freeCodeCamp/freeCodeCamp` | Monorepo · Medium fit | 75/100 |
+| `donnemartin/system-design-primer` | Educational content with examples · Low fit | Not scored |
+| `vinta/awesome-python` | Content with isolated website tooling · Low fit | Not scored |
+| `996icu/996.ICU` | Content with archived tooling · Low fit | Not scored |
+| `mattpocock/skills` | Reusable skill collection · Low fit | Not scored |
+| `CyC2018/CS-Notes` | Narrative content with vendored documentation tests · Low fit | Not scored |
+| `jackfrued/Python-100-Days` | Numbered educational course · Low fit | Not scored |
+| `avelino/awesome-go` | Curated list with maintenance tooling · Low fit | Not scored |
+| `react/react` | Monorepo · Medium fit | 83/100 |
+| `torvalds/linux` | Unknown · truncated tree | Not scored |
+| `TheAlgorithms/Python` | Software project · High fit | 81.5/100 |
+| `obra/superpowers` | Software project · High fit | 73/100 |
+| `yt-dlp/yt-dlp` | Software project · High fit | 83/100 |
+
+The first pass exposed three misleading outcomes: a tutorial index received
+34/100, two curated lists with maintenance code received 70/100 and 78/100, and
+the truncated Linux tree received 66/100 plus unsafe change suggestions. The
+generic Ruleset 1.5.0 applicability rules correct those shapes without matching
+repository owners or names. Numeric values above remain observations, not
+quality rankings or permanent expected scores.
+
+The expanded pass then found five more reusable layout problems: archived
+subprojects looked current, vendored documentation tests looked like product
+tests, `SKILL.md` collections looked like applications, numbered courses looked
+like products, and curated lists with root maintenance tooling looked like
+software. The same generic path and evidence rules now correct those outcomes.
+The three software safeguards in the table remained scoreable after the change.
+
+## Ruleset 1.4.2 observation
+
+Observed on 2026-08-15 using `labuladong/fucking-algorithm` at its default
+branch. Ruleset 1.4.1 treated the 500-path Markdown article collection as an
+unknown medium-fit repository and displayed a 31/100 software-project score.
+The repository describes itself as more than 60 original LeetCode teaching
+articles, while the reviewed tree contained no conventional source or test
+files. Ruleset 1.4.2 therefore classifies this shape as educational/content and
+withholds the numeric software-project score.
+
 ## Ruleset 1.3 observations
 
 Observed on 2026-08-04 and rechecked after the monorepo-classification fix using
@@ -43,12 +91,15 @@ depending on GitHub availability or mutable third-party repositories.
 
 ## Frozen benchmark suite
 
-Ruleset 1.4 adds twelve offline benchmark shapes covering beginner and mature
+Ruleset 1.5 adds twenty-two offline benchmark shapes covering beginner and mature
 software projects, notebooks, documentation-heavy software, content
-collections, sample-heavy projects, monorepos, scoped packages, archived
-repositories, malformed CI, weak tests, and truncated GitHub evidence. The
-benchmarks assert classification, rubric fit, score ranges, and important check
-states rather than one brittle exact score.
+collections (including single-page tutorial indexes, supporting tooling,
+educational examples, archived tools, vendored documentation tests, reusable
+skills, curated lists, numbered courses, and a non-English narrative algorithm
+collection), sample-heavy projects, monorepos, scoped packages, archived repositories,
+malformed CI, weak tests, and truncated GitHub evidence. The benchmarks assert
+classification, rubric fit, score ranges, and important check states rather than
+one brittle exact score.
 
 These fixtures do not prove that the rubric is universally correct. They make
 intentional rule changes visible in code review and prevent known edge cases

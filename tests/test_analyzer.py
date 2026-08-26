@@ -156,6 +156,41 @@ def test_test_support_modules_do_not_count_as_test_cases(
     assert statuses[CheckId.TEST_QUALITY] == CheckStatus.FAIL
 
 
+@pytest.mark.parametrize(
+    "test_file",
+    (
+        "service_test.go",
+        "parser_test.cpp",
+        "account_spec.rb",
+        "ServiceTest.java",
+        "RouterTests.kt",
+    ),
+)
+def test_common_non_python_test_filename_conventions_are_recognized(
+    make_snapshot: Callable[..., RepositorySnapshot],
+    test_file: str,
+) -> None:
+    statuses = _statuses(make_snapshot(files=(test_file,)))
+
+    assert statuses[CheckId.TEST_FILES] == CheckStatus.PARTIAL
+
+
+def test_tests_inside_non_product_support_trees_are_not_counted(
+    make_snapshot: Callable[..., RepositorySnapshot],
+) -> None:
+    statuses = _statuses(
+        make_snapshot(
+            files=(
+                "docs/theme/vendor/tests/parser.test.js",
+                "archived/tool/tests/tool_test.go",
+            )
+        )
+    )
+
+    assert statuses[CheckId.TEST_FILES] == CheckStatus.FAIL
+    assert statuses[CheckId.TEST_QUALITY] == CheckStatus.FAIL
+
+
 def test_paths_are_case_insensitive_and_both_workflow_suffixes_work(
     make_snapshot: Callable[..., RepositorySnapshot],
 ) -> None:

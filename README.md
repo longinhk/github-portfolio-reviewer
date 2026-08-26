@@ -50,8 +50,8 @@ comes from explicit Python rules applied to read-only GitHub evidence.
   without treating third-party scores as code-quality rankings.
 - Includes dark and light GitHub-inspired themes, check filters, search, and a
   mobile-responsive report.
-- Labels scores provisional whenever evidence is sampled, unavailable, or
-  affected by a truncated tree.
+- Labels scores provisional when bounded evidence is sampled or unavailable,
+  and withholds the score when GitHub truncates the repository tree.
 - Handles missing repositories, invalid deployment tokens, API limits, timeouts,
   empty repositories, missing READMEs, and truncated trees.
 - Uses no database and does not intentionally persist GitHub tokens.
@@ -91,9 +91,11 @@ them.
 
 Before presenting a numeric score, the reviewer checks whether the repository
 resembles a software project. Conventional software projects have high rubric
-fit. Monorepos and ambiguous layouts retain a score with a caution. Clear
-educational or reference-content repositories have low fit, so the numeric
-score, category totals, and software-project recommendations are withheld.
+fit. Monorepos and ambiguous complete layouts retain a score with a caution.
+Clear educational or reference-content repositories—including collections with
+isolated maintenance tooling—have low fit, so the numeric score, category
+totals, and software-project recommendations are withheld. Truncated trees are
+also not scored because missing paths make a whole-repository verdict unsafe.
 Stars remain context only and never influence this decision.
 
 ## Architecture
@@ -203,7 +205,7 @@ python -m pytest --cov=github_portfolio_reviewer --cov-report=term-missing
 ```
 
 The tests inject fake HTTP sessions, block accidental real requests, and enforce
-the coverage threshold in `.coveragerc`. Twelve frozen repository-shape
+the coverage threshold in `.coveragerc`. Twenty-two frozen repository-shape
 benchmarks protect important classifications and findings without depending on
 mutable third-party repositories or GitHub availability.
 
@@ -290,8 +292,8 @@ hiring, code-review, compliance, or security product.
   repository is secret-free.
 - Test/example certificate and key fixtures are treated as advisory evidence,
   but production-like paths remain failures requiring manual investigation.
-- GitHub may truncate file trees for very large repositories; those reports are
-  clearly marked provisional.
+- GitHub may truncate file trees for very large repositories; those reports keep
+  reference checks but withhold numeric scores and change recommendations.
 - Heuristics favor common project conventions and can produce false positives or
   false negatives for unusual ecosystems.
 - The reviewer does not inspect every file, commit, branch, issue, pull request,

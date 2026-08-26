@@ -147,6 +147,77 @@ def test_low_fit_repository_suppresses_software_project_suggestions(
     assert generate_suggestions(report, limit=None) == ()
 
 
+def test_truncated_tree_suppresses_repository_change_suggestions(
+    make_snapshot: Callable[..., RepositorySnapshot],
+) -> None:
+    findings = tuple(
+        AnalysisFinding(check_id, CheckStatus.FAIL, "missing") for check_id in CheckId
+    )
+    report = score_repository(
+        make_snapshot(tree_truncated=True, files=("README.md",)),
+        findings,
+    )
+
+    assert report.presentation_score is None
+    assert generate_suggestions(report, limit=None) == ()
+
+
+def test_rust_monorepo_manifest_guidance_respects_repository_shape(
+    make_snapshot: Callable[..., RepositorySnapshot],
+) -> None:
+    findings = [
+        AnalysisFinding(check_id, CheckStatus.PASS, "present") for check_id in CheckId
+    ]
+    index = list(CheckId).index(CheckId.DEPENDENCY_MANIFEST)
+    findings[index] = AnalysisFinding(
+        CheckId.DEPENDENCY_MANIFEST,
+        CheckStatus.FAIL,
+        "No root workspace manifest detected.",
+    )
+    report = score_repository(
+        make_snapshot(
+            language="Rust",
+            files=(
+                "service-a/Cargo.toml",
+                "service-a/src/main.rs",
+                "service-b/Cargo.toml",
+                "service-b/src/main.rs",
+            ),
+        ),
+        tuple(findings),
+    )
+
+    suggestion = generate_suggestions(report, limit=None)[0]
+
+    assert "root Cargo.toml workspace" in suggestion.action
+    assert "do not invent a workspace" in suggestion.action
+    assert "will not award those points" in suggestion.action
+
+
+def test_missing_ci_guidance_describes_only_publicly_visible_evidence(
+    make_snapshot: Callable[..., RepositorySnapshot],
+) -> None:
+    findings = [
+        AnalysisFinding(check_id, CheckStatus.PASS, "present") for check_id in CheckId
+    ]
+    index = list(CheckId).index(CheckId.CI_WORKFLOW)
+    findings[index] = AnalysisFinding(
+        CheckId.CI_WORKFLOW,
+        CheckStatus.FAIL,
+        "No recognized CI configuration detected.",
+    )
+    report = score_repository(
+        make_snapshot(files=("pyproject.toml", "src/app.py", "tests/test_app.py")),
+        tuple(findings),
+    )
+
+    suggestion = generate_suggestions(report, limit=None)[0]
+
+    assert "No recognized public CI configuration" in suggestion.action
+    assert "external CI" in suggestion.action
+    assert "does not count as public automation evidence" in suggestion.action
+
+
 def test_sampled_workflow_result_requests_verification_without_points(
     make_snapshot: Callable[..., RepositorySnapshot],
 ) -> None:

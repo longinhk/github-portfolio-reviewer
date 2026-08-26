@@ -4,7 +4,7 @@ import logging
 from collections.abc import Sequence
 from datetime import datetime
 from html import escape
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 import streamlit as st
 
@@ -16,6 +16,7 @@ from github_portfolio_reviewer.github_client import (
     InvalidRepositoryError,
     RateLimitError,
     RepositoryNotFoundError,
+    parse_repository_reference,
 )
 from github_portfolio_reviewer.models import (
     Category,
@@ -90,6 +91,7 @@ def main() -> None:
     repository_input, review_mode, linked_scope, submitted = _render_review_form(
         compact=has_report
     )
+    _render_repository_input_notice(repository_input)
     _render_repository_shortcuts(compact=has_report)
 
     if submitted and _run_review(
@@ -167,7 +169,11 @@ def _render_introduction() -> None:
 
 
 def _render_review_form(*, compact: bool) -> tuple[str, ReviewMode, bool, bool]:
-    with st.form("repository-review-form", border=True):
+    with st.form(
+        "repository-review-form",
+        border=True,
+        enter_to_submit=True,
+    ):
         heading = (
             "Review another repository" if compact else "Review a public repository"
         )
@@ -227,6 +233,29 @@ def _render_review_form(*, compact: bool) -> tuple[str, ReviewMode, bool, bool]:
         ReviewMode(review_mode_label),
         scope_label == LINKED_SCOPE_LABEL,
         submitted,
+    )
+
+
+def _render_repository_input_notice(repository_input: str) -> None:
+    """Explain when a GitHub file link results in a whole-repository review."""
+    candidate = repository_input.strip()
+    parsed = urlparse(candidate)
+    path_parts = parsed.path.strip("/").split("/")
+    if (
+        parsed.scheme not in {"http", "https"}
+        or parsed.hostname not in {"github.com", "www.github.com"}
+        or len(path_parts) < 5
+        or path_parts[2].casefold() != "blob"
+    ):
+        return
+
+    try:
+        reference = parse_repository_reference(candidate)
+    except InvalidRepositoryError:
+        return
+    st.info(
+        "This link points to a file. The review will analyze the entire "
+        f"{reference.full_name} repository, not only that file."
     )
 
 
@@ -411,6 +440,10 @@ def _render_report(report: ReviewReport) -> None:
             labels.append(
                 '<span class="repo-label repo-label-warning">⚠ LOW RUBRIC FIT</span>'
             )
+        elif repository.tree_truncated:
+            labels.append(
+                '<span class="repo-label repo-label-warning">⚠ INCOMPLETE TREE</span>'
+            )
         st.markdown(
             '<div class="repository-heading">'
             f'<a class="repo-path" href="{escape(repository.html_url)}" '
@@ -439,8 +472,8 @@ def _render_report(report: ReviewReport) -> None:
 
     if repository.tree_truncated:
         st.warning(
-            "GitHub returned a truncated file tree. Missing file-based signals receive "
-            "partial credit, so this portfolio presentation score is provisional."
+            "GitHub returned a truncated file tree. A numeric score and repository "
+            "recommendations are withheld because important paths may be missing."
         )
     if repository.inspection_truncated:
         st.info(
@@ -471,9 +504,8 @@ def _render_report(report: ReviewReport) -> None:
 def _render_score_summary(report: ReviewReport) -> None:
     counts = _check_counts(report.checks)
     if report.presentation_score is None:
+        band, context = _score_withheld_summary(report)
         score_markup = '<div class="score-value score-value-unscored">NOT SCORED</div>'
-        band = "Low software-rubric fit"
-        context = "Reference checks are available, but no numeric verdict is shown."
         percentage = 0
         available = "N/A"
         available_context = "score withheld"
@@ -653,9 +685,7 @@ def _render_top_actions(
     )
     if report.presentation_score is None:
         st.markdown(
-            '<div class="empty-state">Software-project recommendations are hidden '
-            "because this repository does not fit the current rubric. Review the "
-            "repository according to its educational or content purpose.</div>",
+            f'<div class="empty-state">{escape(_score_withheld_guidance(report))}</div>',
             unsafe_allow_html=True,
         )
         return
@@ -694,8 +724,8 @@ def _render_category_scores(report: ReviewReport) -> None:
     )
     if report.presentation_score is None:
         st.markdown(
-            '<div class="empty-state">Category scores are hidden because the '
-            "software-project rubric has low applicability. The Checks tab keeps the "
+            '<div class="empty-state">Category scores are hidden. '
+            f"{escape(_score_withheld_guidance(report))} The Checks tab keeps the "
             "underlying evidence available for reference.</div>",
             unsafe_allow_html=True,
         )
@@ -822,10 +852,7 @@ def _check_rows_markup(checks: Sequence[ScoredCheck], report: ReviewReport) -> s
             suggestion = suggestions_by_check.get(check.check_id)
             if report.presentation_score is None:
                 next_step_label = "RUBRIC NOTE"
-                next_step = (
-                    "No software-project change is recommended because this repository "
-                    "has low rubric applicability."
-                )
+                next_step = _score_withheld_guidance(report)
             elif suggestion is not None:
                 next_step_label = (
                     "VERIFY"
@@ -957,7 +984,7 @@ def _render_suggestions(
     )
     if not suggestions:
         message = (
-            "Software-project recommendations are hidden because rubric fit is low."
+            _score_withheld_guidance(report)
             if report.presentation_score is None
             else "No open recommendations in the current ruleset."
         )
@@ -973,6 +1000,33 @@ def _render_suggestions(
         with st.expander(f"{len(suggestions) - 8} additional recommendations"):
             for index, suggestion in enumerate(suggestions[8:], start=9):
                 _render_suggestion(index, suggestion, report, detailed=True)
+
+
+def _score_withheld_summary(report: ReviewReport) -> tuple[str, str]:
+    """Return score-card copy for an intentionally unavailable numeric result."""
+    if report.repository.tree_truncated:
+        return (
+            "Incomplete repository evidence",
+            "GitHub truncated the file tree, so no numeric verdict is shown.",
+        )
+    return (
+        "Low software-rubric fit",
+        "Reference checks are available, but no numeric verdict is shown.",
+    )
+
+
+def _score_withheld_guidance(report: ReviewReport) -> str:
+    """Return context-aware guidance when score-based actions are unsafe."""
+    if report.repository.tree_truncated:
+        return (
+            "Recommendations are hidden because GitHub truncated the repository tree. "
+            "Review a smaller linked folder or inspect the repository manually."
+        )
+    return (
+        "Software-project recommendations are hidden because this repository does not "
+        "fit the current rubric. Review it according to its educational or content "
+        "purpose."
+    )
 
 
 def _render_suggestion(
