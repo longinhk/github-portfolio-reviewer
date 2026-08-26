@@ -9,7 +9,7 @@ from github_portfolio_reviewer.models import ReviewReport, Suggestion
 from github_portfolio_reviewer.scoring import score_band
 from github_portfolio_reviewer.suggestions import generate_suggestions
 
-EXPORT_SCHEMA_VERSION = "1.4"
+EXPORT_SCHEMA_VERSION = "1.5"
 
 
 def report_to_dict(report: ReviewReport) -> dict[str, Any]:
@@ -76,6 +76,7 @@ def report_to_dict(report: ReviewReport) -> dict[str, Any]:
             "kind": "portfolio_presentation",
             "points": presentation_score,
             "max_points": 100 if presentation_score is not None else None,
+            "withheld_reason": report.score_withheld_reason,
             "band": (
                 score_band(presentation_score)
                 if presentation_score is not None
@@ -170,7 +171,7 @@ def render_markdown_report(report: ReviewReport) -> str:
             f"**{_format_points(score['points'])}/{score['max_points']} — "
             f"{score['band']}**"
             if rubric["score_applicable"]
-            else "**Not scored — the software-project rubric does not fit this repository.**"
+            else f"**Not scored — {score['withheld_reason']}**"
         ),
         "",
         "## Repository facts",
@@ -219,7 +220,7 @@ def render_markdown_report(report: ReviewReport) -> str:
                 "",
                 "## Category breakdown",
                 "",
-                "Category scores are hidden because rubric applicability is low.",
+                f"Category scores are hidden because {score['withheld_reason']}",
             ]
         )
     lines.extend(

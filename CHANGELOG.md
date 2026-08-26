@@ -13,7 +13,7 @@ All notable changes to this project are documented here. The format follows
   used in evidence links.
 - Explicit provisional-score semantics and verified, sampled, unverified, and
   provisional evidence counts in the UI and exports.
-- Twelve frozen offline benchmark shapes for repository classification, rubric
+- Twenty-two frozen offline benchmark shapes for repository classification, rubric
   fit, score ranges, malformed CI, weak tests, and incomplete GitHub evidence.
 - Python 3.13 compatibility testing alongside the protected Python 3.12 quality
   job.
@@ -60,6 +60,27 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- Ruleset 1.5.0 recognizes tutorial indexes, educational guides with example
+  code, and content collections whose software is confined to supporting
+  `scripts/` or `tools/` areas, or to content-dominant `site/` and `website/`
+  areas. These repositories no longer receive misleading whole-repository
+  software scores.
+- Ruleset 1.5.0 also recognizes structured course sequences, `SKILL.md`
+  collections, and narrative-dominant curated lists with maintenance code.
+  Archived projects and tests copied into documentation or vendor trees no
+  longer count as current product evidence.
+- Common Go, C/C++, Ruby, Java, Kotlin, C#, and Swift test filename conventions
+  now contribute test evidence alongside Python and JavaScript conventions.
+- Numeric scores, category totals, and repository-change suggestions are now
+  withheld when GitHub truncates a large repository tree.
+- Export schema 1.5 records the explicit reason a numeric score was withheld.
+- Ruleset 1.4.2 withholds the software-project score for narrative-document
+  repositories that contain no conventional source or tests, including
+  multilingual educational collections without recognized metadata cues.
+- Repository suggestions now distinguish publicly visible CI evidence and use
+  language- and monorepo-aware manifest guidance.
+- Repository review forms keep Enter-to-submit while hiding Streamlit's keyboard
+  submission hint.
 - Ruleset 1.4.1 validates inspected CircleCI, GitLab CI, Travis CI, Azure
   Pipelines, and Jenkins configurations with provider-specific structural
   evidence instead of leaving every non-GitHub configuration uninspected.

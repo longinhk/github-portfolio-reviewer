@@ -14,7 +14,7 @@ from github_portfolio_reviewer.models import (
     ScoredCheck,
 )
 
-RULESET_VERSION = "1.4.1"
+RULESET_VERSION = "1.5.0"
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,7 +98,7 @@ CHECK_SPECIFICATIONS: dict[CheckId, CheckSpecification] = {
         Category.STRUCTURE,
         "Dependency/build manifest",
         4,
-        "Add a standard root manifest such as pyproject.toml or package.json.",
+        "Add the ecosystem-appropriate root manifest or workspace configuration.",
     ),
     CheckId.GITIGNORE: CheckSpecification(
         Category.STRUCTURE,
@@ -140,7 +140,7 @@ CHECK_SPECIFICATIONS: dict[CheckId, CheckSpecification] = {
         Category.CI_CD,
         "CI workflow configuration",
         4,
-        "Add a CI workflow that installs dependencies, lints code, and runs tests.",
+        "Add or complete a public CI workflow that installs dependencies, lints code, and runs tests.",
     ),
     CheckId.ACTIONS_PINNED: CheckSpecification(
         Category.CI_CD,

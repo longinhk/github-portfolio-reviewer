@@ -16,6 +16,7 @@ from github_portfolio_reviewer.app import (
     _error_presentation,
     _filter_checks,
     _projected_score,
+    _render_repository_input_notice,
     _source_url,
     _updated_recent_repositories,
 )
@@ -39,6 +40,7 @@ from github_portfolio_reviewer.models import (
     SuggestionKind,
 )
 from github_portfolio_reviewer.scoring import score_repository
+from github_portfolio_reviewer.suggestions import generate_suggestions
 
 
 def _make_check(
@@ -70,6 +72,7 @@ def test_initial_page_renders_without_exceptions() -> None:
 
     assert not app.exception
     assert app.title[0].value == "Repository review"
+    assert app.get("form")[0].proto.form.enter_to_submit is True
     assert any(button.label == "Run review" for button in app.button)
     assert any(button.label == "Use example" for button in app.button)
     repository_input = next(
@@ -95,6 +98,23 @@ def test_initial_page_renders_without_exceptions() -> None:
         "REQUIRED COST" in markdown.value and "$0" in markdown.value
         for markdown in app.markdown
     )
+
+
+def test_blob_url_shows_whole_repository_notice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    messages: list[str] = []
+    fake_streamlit = SimpleNamespace(info=messages.append)
+    monkeypatch.setattr(app_module, "st", fake_streamlit)
+
+    _render_repository_input_notice(
+        "https://github.com/example/project/blob/main/app.py"
+    )
+
+    assert messages == [
+        "This link points to a file. The review will analyze the entire "
+        "example/project repository, not only that file."
+    ]
 
 
 def test_report_page_renders_all_sections_without_exceptions(
@@ -341,9 +361,38 @@ def test_low_fit_content_repository_is_rendered_without_numeric_score(
     )
     assert "Educational or content repository" in evidence_markup
     assert "Content-oriented repository" in evidence_markup
-    assert "4 content file(s) and 0 test file(s)" in evidence_markup
+    assert "4 content file(s), 1 source file(s), and 0 test file(s)" in evidence_markup
     assert any(
         "Category scores are hidden" in markdown.value for markdown in app.markdown
+    )
+
+
+def test_truncated_tree_is_rendered_without_score_or_recommendations(
+    make_snapshot: Callable[..., RepositorySnapshot],
+) -> None:
+    entry_point = Path(__file__).parents[1] / "streamlit_app.py"
+    snapshot = make_snapshot(
+        tree_truncated=True,
+        files=("README.md", "src/app.py"),
+    )
+    report = score_repository(snapshot, analyze_repository(snapshot))
+    app = AppTest.from_file(str(entry_point))
+    app.session_state["review_report"] = report
+
+    app.run(timeout=10)
+
+    assert not app.exception
+    assert report.presentation_score is None
+    assert generate_suggestions(report, limit=None) == ()
+    assert any("INCOMPLETE TREE" in markdown.value for markdown in app.markdown)
+    assert any(
+        "Incomplete repository evidence" in markdown.value
+        and "NOT SCORED" in markdown.value
+        for markdown in app.markdown
+    )
+    assert any(
+        "numeric score and repository recommendations are withheld" in warning.value
+        for warning in app.warning
     )
 
 

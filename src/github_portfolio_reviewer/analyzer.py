@@ -10,6 +10,7 @@ from pathlib import PurePosixPath
 
 from github_portfolio_reviewer.conventions import (
     GITHUB_WORKFLOW_PATTERN,
+    follows_test_file_convention,
     is_ci_file,
 )
 from github_portfolio_reviewer.models import (
@@ -45,6 +46,8 @@ RESERVED_SOURCE_DIRECTORIES = {
     ".git",
     ".github",
     ".venv",
+    "archive",
+    "archived",
     "build",
     "cache",
     "dist",
@@ -58,6 +61,7 @@ RESERVED_SOURCE_DIRECTORIES = {
     "tests",
     "vendor",
 }
+NON_PRODUCT_TEST_DIRECTORIES = RESERVED_SOURCE_DIRECTORIES - {"test", "tests"}
 SOURCE_DIRECTORIES = {"app", "lib", "pkg", "src"}
 DOCUMENTATION_DIRECTORIES = {"doc", "docs", "documentation"}
 DOCUMENTATION_SUFFIXES = {".adoc", ".ipynb", ".md", ".rst", ".txt"}
@@ -574,17 +578,12 @@ def _modularity_finding(production_files: tuple[str, ...]) -> AnalysisFinding:
 
 def _is_test_file(path: str) -> bool:
     pure_path = PurePosixPath(path)
-    name = pure_path.name
-    if name in {"__init__.py", "conftest.py", "factories.py", "fixtures.py"}:
+    if pure_path.suffix not in SOURCE_EXTENSIONS:
         return False
     parts = set(pure_path.parts[:-1])
-    if {"test", "tests", "__tests__", "spec", "specs"} & parts:
-        return pure_path.suffix in SOURCE_EXTENSIONS
-    return bool(
-        re.fullmatch(r"test_.+\.py", name)
-        or re.fullmatch(r".+_test\.py", name)
-        or re.fullmatch(r".+\.(?:test|spec)\.[jt]sx?", name)
-    )
+    if parts & NON_PRODUCT_TEST_DIRECTORIES:
+        return False
+    return follows_test_file_convention(path)
 
 
 def _test_files_finding(

@@ -226,6 +226,10 @@ div[data-testid="stForm"] {
     padding: 1rem 1rem 0.7rem;
 }
 
+div[data-testid="stForm"] [data-testid="InputInstructions"] {
+    display: none !important;
+}
+
 .form-heading {
     color: var(--text);
     font-size: 0.95rem;

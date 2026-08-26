@@ -229,10 +229,19 @@ class ReviewReport:
 
     @property
     def presentation_score(self) -> float | None:
-        """Return a score only when the software-project rubric is applicable."""
-        if self.rubric_assessment.fit == RubricFit.LOW:
+        """Return a score only when the rubric fits and tree evidence is complete."""
+        if self.score_withheld_reason is not None:
             return None
         return self.score
+
+    @property
+    def score_withheld_reason(self) -> str | None:
+        """Explain why a numeric presentation score is unavailable."""
+        if self.repository.tree_truncated:
+            return "GitHub truncated the repository file tree."
+        if self.rubric_assessment.fit == RubricFit.LOW:
+            return "The software-project rubric does not fit this repository."
+        return None
 
     @property
     def score_is_provisional(self) -> bool:
