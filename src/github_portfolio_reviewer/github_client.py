@@ -310,6 +310,8 @@ class GitHubClient:
             revision=commit_sha or default_branch,
             scope_path=scope_path,
         )
+        blobs: tuple[_TreeBlob, ...]
+        tree_truncated: bool
         if repository_is_empty:
             blobs, tree_truncated = (), False
         else:
@@ -521,6 +523,7 @@ class GitHubClient:
 
         inspected: list[RepositoryTextFile] = []
         for blob in fetchable:
+            assert blob.sha is not None
             try:
                 content = self._fetch_blob_text(encoded_name, blob.sha)
             except (GitHubAPIError, RateLimitError):

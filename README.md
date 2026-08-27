@@ -50,6 +50,8 @@ comes from explicit Python rules applied to read-only GitHub evidence.
   without treating third-party scores as code-quality rankings.
 - Includes dark and light GitHub-inspired themes, check filters, search, and a
   mobile-responsive report.
+- Includes a reusable command-line interface for Markdown or JSON reviews and a
+  labeled-observation evaluator with explicit confusion tables.
 - Labels scores provisional when bounded evidence is sampled or unavailable,
   and withholds the score when GitHub truncates the repository tree.
 - Handles missing repositories, invalid deployment tokens, API limits, timeouts,
@@ -170,6 +172,23 @@ streamlit run streamlit_app.py
    share the review.
 7. Open **Settings** to change appearance and see the current API mode.
 
+### Command-line usage
+
+After installation, generate a portable report without Streamlit:
+
+```bash
+portfolio-review longinhk/github-portfolio-reviewer --format markdown
+portfolio-review pallets/flask --focus python --format json --output flask-review.json
+```
+
+Set an optional read-only `GITHUB_TOKEN` environment variable for a higher API
+allowance. The CLI never accepts tokens as command-line arguments, avoiding
+shell-history and process-list exposure.
+
+Classification evaluation tooling and the distinction between regression
+fixtures and independent labels are documented in
+[`docs/evaluation-methodology.md`](docs/evaluation-methodology.md).
+
 Try `longinhk/github-portfolio-reviewer` to review this project itself. A cold
 review normally makes four base GitHub requests plus at most ten bounded
 text-file requests. A temporary connection or GitHub server failure may retry
@@ -201,6 +220,7 @@ GitHub token only; the application never asks for an AI service key.
 ```bash
 python -m ruff check .
 python -m ruff format --check .
+python -m mypy src/github_portfolio_reviewer
 python -m pytest --cov=github_portfolio_reviewer --cov-report=term-missing
 ```
 

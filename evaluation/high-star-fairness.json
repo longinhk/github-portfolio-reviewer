@@ -1,0 +1,77 @@
+[
+  {
+    "name": "codecrafters-io/build-your-own-x",
+    "expected": {"kind": "Educational or content repository", "fit": "Low"},
+    "observed": {"kind": "Educational or content repository", "fit": "Low"}
+  },
+  {
+    "name": "public-apis/public-apis",
+    "expected": {"kind": "Educational or content repository", "fit": "Low"},
+    "observed": {"kind": "Educational or content repository", "fit": "Low"}
+  },
+  {
+    "name": "freeCodeCamp/freeCodeCamp",
+    "expected": {"kind": "Monorepo", "fit": "Medium"},
+    "observed": {"kind": "Monorepo", "fit": "Medium"}
+  },
+  {
+    "name": "donnemartin/system-design-primer",
+    "expected": {"kind": "Educational or content repository", "fit": "Low"},
+    "observed": {"kind": "Educational or content repository", "fit": "Low"}
+  },
+  {
+    "name": "vinta/awesome-python",
+    "expected": {"kind": "Educational or content repository", "fit": "Low"},
+    "observed": {"kind": "Educational or content repository", "fit": "Low"}
+  },
+  {
+    "name": "996icu/996.ICU",
+    "expected": {"kind": "Educational or content repository", "fit": "Low"},
+    "observed": {"kind": "Educational or content repository", "fit": "Low"}
+  },
+  {
+    "name": "mattpocock/skills",
+    "expected": {"kind": "Educational or content repository", "fit": "Low"},
+    "observed": {"kind": "Educational or content repository", "fit": "Low"}
+  },
+  {
+    "name": "CyC2018/CS-Notes",
+    "expected": {"kind": "Educational or content repository", "fit": "Low"},
+    "observed": {"kind": "Educational or content repository", "fit": "Low"}
+  },
+  {
+    "name": "jackfrued/Python-100-Days",
+    "expected": {"kind": "Educational or content repository", "fit": "Low"},
+    "observed": {"kind": "Educational or content repository", "fit": "Low"}
+  },
+  {
+    "name": "avelino/awesome-go",
+    "expected": {"kind": "Educational or content repository", "fit": "Low"},
+    "observed": {"kind": "Educational or content repository", "fit": "Low"}
+  },
+  {
+    "name": "react/react",
+    "expected": {"kind": "Monorepo", "fit": "Medium"},
+    "observed": {"kind": "Monorepo", "fit": "Medium"}
+  },
+  {
+    "name": "torvalds/linux (truncated evidence)",
+    "expected": {"kind": "Unknown repository type", "fit": "Medium"},
+    "observed": {"kind": "Unknown repository type", "fit": "Medium"}
+  },
+  {
+    "name": "TheAlgorithms/Python",
+    "expected": {"kind": "Software project", "fit": "High"},
+    "observed": {"kind": "Software project", "fit": "High"}
+  },
+  {
+    "name": "obra/superpowers",
+    "expected": {"kind": "Software project", "fit": "High"},
+    "observed": {"kind": "Software project", "fit": "High"}
+  },
+  {
+    "name": "yt-dlp/yt-dlp",
+    "expected": {"kind": "Software project", "fit": "High"},
+    "observed": {"kind": "Software project", "fit": "High"}
+  }
+]

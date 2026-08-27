@@ -8,6 +8,12 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- A portable `portfolio-review` command that exports Markdown or JSON without
+  starting Streamlit, plus a `portfolio-evaluate` command for labeled
+  classification accuracy and confusion tables.
+- Documented independent-evaluation protocol and a machine-readable baseline of
+  the existing high-star fairness observations.
+- Static type checking for the complete application package in CI.
 - Ruleset 1.4 commit-pinned evidence: README, tree, and inspected files are read
   from one resolved default-branch revision, which is displayed, exported, and
   used in evidence links.

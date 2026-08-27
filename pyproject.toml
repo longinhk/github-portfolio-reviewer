@@ -19,10 +19,15 @@ Issues = "https://github.com/longinhk/github-portfolio-reviewer/issues"
 
 [project.optional-dependencies]
 dev = [
+    "mypy>=1.20,<2",
     "pytest>=8.2,<10",
     "pytest-cov>=6,<8",
     "ruff>=0.5,<1",
 ]
+
+[project.scripts]
+portfolio-review = "github_portfolio_reviewer.cli:main"
+portfolio-evaluate = "github_portfolio_reviewer.evaluation:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -42,3 +47,13 @@ ignore = ["E501"]
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
+
+[tool.mypy]
+python_version = "3.12"
+check_untyped_defs = true
+ignore_missing_imports = true
+no_implicit_optional = true
+show_error_codes = true
+strict_equality = true
+warn_redundant_casts = true
+warn_unused_ignores = true
